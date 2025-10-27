@@ -56,10 +56,16 @@ export class BrotherPrinterService {
       const result = await BrotherPrinterModule.printBarcode(plantId, printerIp, guildName, regionName);
       return { success: result };
     } catch (error) {
-      console.error('Ошибка печати штрихкода:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Неизвестная ошибка печати';
+      
+      // Не выводим в консоль ошибку OpenStreamFailure
+      if (!errorMessage.includes('OpenStreamFailure')) {
+        console.error('Ошибка печати штрихкода:', error);
+      }
+      
       return { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Неизвестная ошибка печати'
+        error: errorMessage
       };
     }
   }

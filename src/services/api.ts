@@ -186,7 +186,9 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       console.error('Upgrade plant error:', error);
-      throw new Error(error.response?.data?.message || 'Ошибка улучшения предприятия');
+      console.error('Error response:', error.response?.data);
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Ошибка улучшения предприятия';
+      throw new Error(errorMessage);
     }
   }
 

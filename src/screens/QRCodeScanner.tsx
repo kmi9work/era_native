@@ -5,11 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  Platform,
-  Dimensions,
-  PermissionsAndroid,
 } from 'react-native';
-import { Camera, CameraType, useCameraDevices, useFrameProcessor, Frame } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCodeScanner } from 'react-native-vision-camera';
 
 interface QRCodeScannerProps {
   onScan: (data: string) => void;
@@ -19,57 +16,52 @@ interface QRCodeScannerProps {
 const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onScan, onClose }) => {
   const [hasPermission, setHasPermission] = useState(false);
   const [scanned, setScanned] = useState(false);
-  const devices = useCameraDevices();
-  const device = devices.back;
+  const device = useCameraDevice('back');
   const cameraRef = useRef<Camera>(null);
 
   useEffect(() => {
     requestCameraPermission();
   }, []);
 
+  useEffect(() => {
+    console.log('Device status:', device ? 'found' : 'not found');
+    console.log('Device details:', device);
+  }, [device]);
+
   const requestCameraPermission = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.CAMERA,
-          {
-            title: 'Разрешение на использование камеры',
-            message: 'Приложению требуется доступ к камере для сканирования QR-кодов.',
-            buttonNeutral: 'Спросить позже',
-            buttonNegative: 'Отмена',
-            buttonPositive: 'OK',
-          },
-        );
-        if (granted === PermissionsAndroid.RESULT_GRANTED) {
-          setHasPermission(true);
-        } else {
-          Alert.alert('Ошибка', 'Разрешение на использование камеры отклонено.');
-          onClose();
-        }
-      } catch (err) {
-        console.warn(err);
-        Alert.alert('Ошибка', 'Произошла ошибка при запросе разрешения на камеру.');
+    try {
+      const permission = await Camera.requestCameraPermission();
+      
+      if (permission === 'granted') {
+        setHasPermission(true);
+      } else if (permission === 'denied') {
+        Alert.alert('Ошибка', 'Разрешение на использование камеры отклонено.');
+        onClose();
+      } else {
+        // permission === 'restricted' or other
+        Alert.alert('Ошибка', 'Доступ к камере ограничен.');
         onClose();
       }
-    } else {
-      // For iOS, VisionCamera handles permissions automatically on first use
-      setHasPermission(true);
+    } catch (err) {
+      console.warn(err);
+      Alert.alert('Ошибка', 'Произошла ошибка при запросе разрешения на камеру.');
+      onClose();
     }
   };
 
-  const onBarcodeScanned = (barcodeData: string) => {
-    if (!scanned && barcodeData) {
-      setScanned(true);
-      onScan(barcodeData);
-    }
-  };
-
-  // Простой frame processor для демонстрации
-  const frameProcessor = useFrameProcessor((frame: Frame) => {
-    'worklet';
-    // Здесь можно добавить логику сканирования QR-кодов
-    // Пока что просто заглушка
-  }, [scanned]);
+  const codeScanner = useCodeScanner({
+    codeTypes: ['qr', 'ean-13'],
+    onCodeScanned: (codes) => {
+      if (!scanned && codes.length > 0) {
+        setScanned(true);
+        const value = codes[0].value;
+        if (value) {
+          console.log('QR-код отсканирован:', value);
+          onScan(value);
+        }
+      }
+    },
+  });
 
   if (!hasPermission) {
     return (
@@ -82,7 +74,10 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onScan, onClose }) => {
   if (device == null) {
     return (
       <View style={styles.container}>
-        <Text style={styles.permissionText}>Камера не найдена.</Text>
+        <Text style={styles.permissionText}>Инициализация камеры...</Text>
+        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+          <Text style={styles.closeButtonText}>Закрыть</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -95,12 +90,13 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onScan, onClose }) => {
           style={StyleSheet.absoluteFill}
           device={device}
           isActive={true}
-          frameProcessor={frameProcessor}
-          frameProcessorFps={5}
+          codeScanner={codeScanner}
         />
       )}
       <View style={styles.overlay}>
-        <Text style={styles.scanText}>Сканируйте QR-код</Text>
+        <Text style={styles.scanText}>
+          {scanned ? 'QR-код отсканирован!' : 'Наведите камеру на QR-код'}
+        </Text>
         <View style={styles.qrCodeFrame} />
         <TouchableOpacity style={styles.closeButton} onPress={onClose}>
           <Text style={styles.closeButtonText}>Закрыть</Text>

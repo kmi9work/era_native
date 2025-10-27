@@ -69,7 +69,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     setLoading(true);
     try {
       const data = await ApiService.getGuilds();
-      setGuilds(data);
+      // Сортируем гильдии по названию
+      const sortedData = data.sort((a, b) => a.name.localeCompare(b.name));
+      setGuilds(sortedData);
     } catch (error: any) {
       Alert.alert('Ошибка', error.message);
     } finally {
@@ -132,10 +134,10 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         setSelectedPlantForUpgrade(data);
         
         // Загружаем стоимость улучшения
-        const plantTypeId = data.plant_type?.id;
+        const plantTypeId = data.plant_level?.plant_type?.id;
         if (plantTypeId) {
           const levels = await ApiService.getPlantLevels(plantTypeId);
-          const currentLevel = data.level || 1;
+          const currentLevel = data.plant_level?.level || 1;
           const nextLevel = levels.find(l => l.level === currentLevel + 1);
           
           if (nextLevel) {
@@ -181,7 +183,13 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         setLoading(true);
         try {
           const plants = await ApiService.getGuildPlants(selectedGuild.id);
-          setGuildPlants(plants);
+          // Сортируем предприятия по названию типа предприятия
+          const sortedPlants = plants.sort((a, b) => {
+            const nameA = a.plant_level?.plant_type?.name || '';
+            const nameB = b.plant_level?.plant_type?.name || '';
+            return nameA.localeCompare(nameB);
+          });
+          setGuildPlants(sortedPlants);
         } catch (error: any) {
           console.error('Failed to load guild plants:', error);
         } finally {
@@ -268,7 +276,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       }
 
       // Форматируем ID в формат %09d (9 цифр с ведущими нулями)
-      const formattedPlantId = plantData.id.toString().padStart(9, '0');
+      const formattedPlantId = plantData.id.toString();
       
       console.log('=== PLANT WORKSHOP DEBUG ===');
       console.log('PlantData:', plantData);
@@ -294,18 +302,44 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         setSelectedPlace(null);
         setStep('guild');
       } else {
-        // Печать неудачна - откатываем создание предприятия
-        console.error('Ошибка печати:', printResult.error);
-        
-        try {
-          await ApiService.deletePlant(plantData.id);
-        } catch (deleteError) {
-          console.error('Ошибка удаления предприятия:', deleteError);
+        // Печать неудачна - предлагаем выбор
+        // Не выводим ошибку в консоль для OpenStreamFailure
+        if (!printResult.error || !printResult.error.includes('OpenStreamFailure')) {
+          console.error('Ошибка печати:', printResult.error);
         }
         
         Alert.alert(
           'Ошибка печати',
-          `Не удалось напечатать штрихкод: ${printResult.error}\n\nПредприятие не было создано. Проверьте настройки принтера.`
+          `Не удалось напечатать штрихкод: ${printResult.error}\n\nПроверьте настройки принтера.\n\nХотите всё равно создать предприятие без печати?`,
+          [
+            {
+              text: 'Отменить',
+              style: 'cancel',
+              onPress: async () => {
+                // Удаляем предприятие
+                try {
+                  await ApiService.deletePlant(plantData.id);
+                  console.log('Предприятие удалено после отмены');
+                } catch (deleteError) {
+                  console.error('Ошибка удаления предприятия:', deleteError);
+                  Alert.alert('Ошибка', 'Не удалось удалить предприятие. Обратитесь к администратору.');
+                }
+              }
+            },
+            {
+              text: 'Всё равно создать',
+              onPress: () => {
+                Alert.alert('Успех', `Предприятие создано!\nID: ${plantData.id}\n\nШтрихкод не был напечатан. Вы можете распечатать его позже.`);
+                
+                // Сброс состояния
+                setSelectedPlantType(null);
+                setFirstLevel(null);
+                setSelectedPlace(null);
+                setStep('guild');
+              }
+            }
+          ],
+          { cancelable: false }
         );
       }
     } catch (error: any) {
@@ -330,9 +364,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     try {
       const data = await ApiService.getPlant(parseInt(idToLoad));
       
-      // В ответе plant_type находится на верхнем уровне из-за partial
-      const plantTypeId = data.plant_type?.id;
-      const currentLevel = data.level || 1;
+      // В ответе plant_type находится внутри plant_level
+      const plantTypeId = data.plant_level?.plant_type?.id;
+      const currentLevel = data.plant_level?.level || 1;
       
       if (!plantTypeId) {
         Alert.alert('Ошибка', 'Не удалось определить тип предприятия');
@@ -359,9 +393,48 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   };
 
   const handleSelectPlant = (plant: any) => {
-    const formattedId = plant.id.toString().padStart(9, '0');
+    const formattedId = plant.id.toString();
     setPlantId(formattedId);
     handleLoadPlant(formattedId);
+  };
+
+  const handleDeletePlant = async (plant: any) => {
+    Alert.alert(
+      'Удаление предприятия',
+      `Вы уверены, что хотите удалить "${plant.plant_level?.plant_type?.name}" (ID: ${plant.id})?\n\nЭто действие нельзя отменить.`,
+      [
+        {
+          text: 'Отменить',
+          style: 'cancel',
+        },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              await ApiService.deletePlant(plant.id);
+              Alert.alert('Успех', 'Предприятие успешно удалено');
+              
+              // Обновляем список предприятий
+              if (selectedGuild) {
+                const plants = await ApiService.getGuildPlants(selectedGuild.id);
+                const sortedPlants = plants.sort((a, b) => {
+                  const nameA = a.plant_level?.plant_type?.name || '';
+                  const nameB = b.plant_level?.plant_type?.name || '';
+                  return nameA.localeCompare(nameB);
+                });
+                setGuildPlants(sortedPlants);
+              }
+            } catch (error: any) {
+              Alert.alert('Ошибка', error.message || 'Не удалось удалить предприятие');
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleUpgradePlant = async () => {
@@ -426,7 +499,8 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       {/* Скрытый TextInput для захвата ввода от сканера */}
       <TextInput
         ref={scannerInputRef}
-        style={{ position: 'absolute', opacity: 0, height: 0, width: 0 }}
+        style={{ position: 'absolute', top: -1000, left: -1000, opacity: 0, height: 1, width: 1 }}
+        pointerEvents="none"
         value=""
         onChangeText={(text) => {
           console.log('=== SCANNER INPUT DEBUG ===');
@@ -476,37 +550,10 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
             setSequenceTimeout(timeout);
           }
         }}
-        onSubmitEditing={(event) => {
-          console.log('onSubmitEditing triggered');
-          // Блокируем стандартное поведение Enter
-          event.preventDefault();
-          return false;
-        }}
-        onKeyPress={(event) => {
-          console.log('onKeyPress triggered:', event.nativeEvent.key);
-          // Блокируем Enter и другие служебные клавиши
-          if (event.nativeEvent.key === 'Enter') {
-            event.preventDefault();
-            return false;
-          }
-        }}
-        onFocus={() => {
-          console.log('Scanner input focused');
-        }}
-        onBlur={() => {
-          console.log('Scanner input blurred, refocusing...');
-          // Восстанавливаем фокус если он потерялся
-          setTimeout(() => {
-            scannerInputRef.current?.focus();
-          }, 100);
-        }}
         keyboardType="numeric"
         maxLength={9}
-        autoFocus={true}
-        showSoftInputOnFocus={false} // Скрываем клавиатуру
-        caretHidden={true} // Скрываем курсор
-        blurOnSubmit={false} // Не теряем фокус при Enter
-        returnKeyType="none" // Убираем кнопку отправки
+        showSoftInputOnFocus={false}
+        caretHidden={true}
       />
       
       {loading ? (
@@ -517,6 +564,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
             <TouchableOpacity
               key={guild.id}
               style={styles.itemButton}
+              activeOpacity={0.7}
               onPress={() => handleSelectGuild(guild)}
             >
               <Text style={styles.itemButtonText}>{guild.name}</Text>
@@ -531,10 +579,10 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   const renderScenarioSelection = () => (
     <View style={styles.content}>
       <Text style={styles.stepTitle}>Выберите действие</Text>
-      <Text style={styles.selectedInfo}>Гильдия: {selectedGuild?.name}</Text>
       
       <TouchableOpacity
         style={styles.scenarioButton}
+        activeOpacity={0.7}
         onPress={() => handleSelectScenario('new')}
       >
         <Text style={styles.scenarioButtonIcon}>➕</Text>
@@ -545,6 +593,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
 
       <TouchableOpacity
         style={styles.scenarioButton}
+        activeOpacity={0.7}
         onPress={() => handleSelectScenario('upgrade')}
       >
         <Text style={styles.scenarioButtonIcon}>⬆️</Text>
@@ -562,12 +611,12 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       return (
         <View style={styles.content}>
           <Text style={styles.stepTitle}>Выберите тип предприятия</Text>
-          <Text style={styles.selectedInfo}>Гильдия: {selectedGuild?.name}</Text>
           
           {/* Фильтры */}
           <View style={styles.filterContainer}>
             <TouchableOpacity
               style={[styles.filterButton, filterType === 'all' && styles.filterButtonActive]}
+              activeOpacity={0.7}
               onPress={() => setFilterType('all')}
             >
               <Text style={[styles.filterButtonText, filterType === 'all' && styles.filterButtonTextActive]}>
@@ -577,6 +626,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
             
             <TouchableOpacity
               style={[styles.filterButton, filterType === 'extractive' && styles.filterButtonActive]}
+              activeOpacity={0.7}
               onPress={() => setFilterType('extractive')}
             >
               <Text style={[styles.filterButtonText, filterType === 'extractive' && styles.filterButtonTextActive]}>
@@ -586,6 +636,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
             
             <TouchableOpacity
               style={[styles.filterButton, filterType === 'processing' && styles.filterButtonActive]}
+              activeOpacity={0.7}
               onPress={() => setFilterType('processing')}
             >
               <Text style={[styles.filterButtonText, filterType === 'processing' && styles.filterButtonTextActive]}>
@@ -605,6 +656,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
                     styles.itemButton,
                     plantType.available_places.length === 0 && styles.itemButtonDisabled
                   ]}
+                  activeOpacity={0.7}
                   onPress={() => handleSelectPlantType(plantType)}
                   disabled={plantType.available_places.length === 0}
                 >
@@ -628,7 +680,6 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       return (
         <View style={styles.content}>
           <Text style={styles.stepTitle}>{selectedPlantType.plant_type_name}</Text>
-          <Text style={styles.selectedInfo}>Гильдия: {selectedGuild?.name}</Text>
           
           {firstLevel && (
             <View style={styles.costBlock}>
@@ -654,6 +705,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
               <TouchableOpacity
                 key={place.id}
                 style={styles.itemButton}
+                activeOpacity={0.7}
                 onPress={() => setSelectedPlace(place)}
               >
                 <Text style={styles.itemButtonText}>{place.region_name}</Text>
@@ -674,7 +726,6 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     return (
       <View style={styles.content}>
         <Text style={styles.stepTitle}>Подтверждение строительства</Text>
-        <Text style={styles.selectedInfo}>Гильдия: {selectedGuild?.name}</Text>
         
         <View style={styles.confirmBlock}>
           <Text style={styles.confirmLabel}>Тип предприятия:</Text>
@@ -682,9 +733,6 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
           
           <Text style={styles.confirmLabel}>Место строительства:</Text>
           <Text style={styles.confirmValue}>{placeToShow?.region_name || 'Не выбрано'}</Text>
-          
-          <Text style={styles.confirmLabel}>Гильдия:</Text>
-          <Text style={styles.confirmValue}>{selectedGuild?.name}</Text>
         </View>
 
         {firstLevel && (
@@ -707,6 +755,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
 
         <TouchableOpacity
           style={styles.primaryButton}
+          activeOpacity={0.7}
           onPress={handleBuildPlant}
           disabled={loading}
         >
@@ -723,20 +772,6 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     if (selectedPlantForUpgrade && upgradeCost) {
       return (
         <View style={styles.content}>
-          <Text style={styles.stepTitle}>Подтверждение улучшения</Text>
-          <Text style={styles.selectedInfo}>Гильдия: {selectedGuild?.name}</Text>
-          
-          <View style={styles.confirmBlock}>
-            <Text style={styles.confirmLabel}>Тип предприятия:</Text>
-            <Text style={styles.confirmValue}>{selectedPlantForUpgrade.plant_type?.name || 'N/A'}</Text>
-            
-            <Text style={styles.confirmLabel}>Текущий уровень:</Text>
-            <Text style={styles.confirmValue}>{selectedPlantForUpgrade.level || 'N/A'}</Text>
-            
-            <Text style={styles.confirmLabel}>ID предприятия:</Text>
-            <Text style={styles.confirmValue}>{selectedPlantForUpgrade.id?.toString().padStart(9, '0') || 'N/A'}</Text>
-          </View>
-
           <View style={styles.costBlock}>
             <Text style={styles.costTitle}>Стоимость улучшения:</Text>
             {Object.entries(upgradeCost).map(([resource, amount]) => {
@@ -755,6 +790,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
           
           <TouchableOpacity
             style={styles.primaryButton}
+            activeOpacity={0.7}
             onPress={handleUpgradePlant}
             disabled={loading}
           >
@@ -770,28 +806,36 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     return (
       <View style={styles.content}>
         <Text style={styles.stepTitle}>Улучшение предприятия</Text>
-        <Text style={styles.selectedInfo}>Гильдия: {selectedGuild?.name}</Text>
 
         {guildPlants.length > 0 && (
           <View style={styles.plantsListContainer}>
             <Text style={styles.sectionTitle}>Предприятия гильдии:</Text>
             <ScrollView style={styles.plantsListScroll}>
               {guildPlants.map((plant) => (
-                <TouchableOpacity
-                  key={plant.id}
-                  style={styles.itemButton}
-                  onPress={() => handleSelectPlant(plant)}
-                >
-                  <View style={styles.itemButtonContent}>
-                    <Text style={styles.itemButtonText}>
-                      {plant.plant_level?.plant_type?.name || 'Предприятие'}
-                    </Text>
-                    <Text style={styles.itemButtonSubtext}>
-                      Уровень {plant.plant_level?.level || '?'} • ID: {plant.id}
-                    </Text>
-                  </View>
-                  <Text style={styles.itemButtonArrow}>›</Text>
-                </TouchableOpacity>
+                <View key={plant.id} style={styles.plantItemContainer}>
+                  <TouchableOpacity
+                    style={styles.itemButton}
+                    activeOpacity={0.7}
+                    onPress={() => handleSelectPlant(plant)}
+                  >
+                    <View style={styles.itemButtonContent}>
+                      <Text style={styles.itemButtonText}>
+                        {plant.plant_level?.plant_type?.name || 'Предприятие'}
+                      </Text>
+                      <Text style={styles.itemButtonSubtext}>
+                        Уровень {plant.plant_level?.level || '?'} • ID: {plant.id}
+                      </Text>
+                    </View>
+                    <Text style={styles.itemButtonArrow}>›</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.deleteButton}
+                    activeOpacity={0.7}
+                    onPress={() => handleDeletePlant(plant)}
+                  >
+                    <Text style={styles.deleteButtonIcon}>🗑️</Text>
+                  </TouchableOpacity>
+                </View>
               ))}
             </ScrollView>
           </View>
@@ -826,6 +870,53 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     }
   };
 
+  const renderHeader = () => {
+    // Для экрана подтверждения улучшения - показываем информацию о предприятии
+    if (step === 'upgrade' && selectedPlantForUpgrade) {
+      const plantInfo = `${selectedPlantForUpgrade.plant_level?.plant_type?.name} • Ур. ${selectedPlantForUpgrade.plant_level?.level} • ${selectedGuild?.name} • ID: ${selectedPlantForUpgrade.id}`;
+      
+      return (
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.headerBackButton} activeOpacity={0.7} onPress={handleBack}>
+            <Text style={styles.headerBackButtonText}>Назад</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenterRow}>
+            <Text style={styles.titleInline}>Улучшение:</Text>
+            <Text style={styles.headerInfoInline}>{plantInfo}</Text>
+          </View>
+          <View style={styles.headerSpacer} />
+        </View>
+      );
+    }
+    
+    // Для остальных экранов - показываем гильдию если выбрана
+    if (selectedGuild && step !== 'guild') {
+      return (
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.headerBackButton} activeOpacity={0.7} onPress={handleBack}>
+            <Text style={styles.headerBackButtonText}>Назад</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenterRow}>
+            <Text style={styles.titleInline}>Предприятия:</Text>
+            <Text style={styles.headerInfoInline}>{selectedGuild.name}</Text>
+          </View>
+          <View style={styles.headerSpacer} />
+        </View>
+      );
+    }
+    
+    // Обычный заголовок для начального экрана
+    return (
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.headerBackButton} activeOpacity={0.7} onPress={handleBack}>
+          <Text style={styles.headerBackButtonText}>Назад</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>Предприятия</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+    );
+  };
+
   return (
     <View 
       style={styles.container}
@@ -856,13 +947,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         }
       }}
     >
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.headerBackButton} onPress={handleBack}>
-          <Text style={styles.headerBackButtonText}>Назад</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Предприятия</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      {renderHeader()}
 
       {step === 'guild' && renderGuildSelection()}
       {step === 'scenario' && renderScenarioSelection()}
@@ -883,14 +968,35 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    paddingTop: 50,
+    paddingTop: 20,
     backgroundColor: '#1976d2',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerCenterRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  titleInline: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: 'white',
+    marginRight: 8,
+  },
+  headerInfoInline: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '500',
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
     color: 'white',
-    flex: 1,
     textAlign: 'center',
   },
   headerSpacer: {
@@ -927,12 +1033,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '500',
   },
-  selectedInfo: {
-    fontSize: 14,
-    color: '#1976d2',
-    marginBottom: 20,
-    fontWeight: '600',
-  },
   filterContainer: {
     flexDirection: 'row',
     marginBottom: 15,
@@ -964,17 +1064,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   itemButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'white',
-    padding: 15,
+    padding: 20,
     borderRadius: 12,
-    marginBottom: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    minHeight: 60,
   },
   itemButtonDisabled: {
     opacity: 0.4,
@@ -1036,6 +1137,9 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderLeftWidth: 4,
     borderLeftColor: '#ff9800',
+    alignSelf: 'center',
+    maxWidth: 400,
+    minWidth: 300,
   },
   costTitle: {
     fontSize: 16,
@@ -1069,6 +1173,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    alignSelf: 'center',
+    maxWidth: 400,
+    minWidth: 300,
   },
   confirmLabel: {
     fontSize: 14,
@@ -1128,6 +1235,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 10,
+    alignSelf: 'center',
+    maxWidth: 400,
+    minWidth: 300,
   },
   primaryButtonText: {
     fontSize: 16,
@@ -1160,6 +1270,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'white',
     fontWeight: '600',
+  },
+  plantItemContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  deleteButton: {
+    backgroundColor: '#f44336',
+    padding: 12,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    minWidth: 50,
+    minHeight: 60,
+  },
+  deleteButtonIcon: {
+    fontSize: 24,
   },
 });
 
