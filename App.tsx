@@ -1,13 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, StatusBar } from 'react-native';
 
-// Импорт экранов
+// Импорт экранов ядра
 import LoginScreen from './src/screens/LoginScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import PlantWorkshopScreen from './src/screens/PlantWorkshopScreen';
 import ProcessingScreen from './src/screens/ProcessingScreen';
+
+// Импорт registry и плагинов
+import { componentRegistry } from './src/registry';
+import { initializePlugins } from './src/plugins';
 import { Player } from './src/types';
+
+// Регистрируем компоненты ядра
+componentRegistry.register('LoginScreen', LoginScreen, true);
+componentRegistry.register('DashboardScreen', DashboardScreen, true);
+componentRegistry.register('SettingsScreen', SettingsScreen, true);
+componentRegistry.register('PlantWorkshopScreen', PlantWorkshopScreen, true);
+componentRegistry.register('ProcessingScreen', ProcessingScreen, true);
+
+// Инициализируем плагины (могут переопределить компоненты)
+initializePlugins();
 
 export default function App() {
   const [player, setPlayer] = useState<Player | null>(null);
@@ -70,22 +84,29 @@ export default function App() {
   }
 
   const renderScreen = () => {
+    // Получаем компоненты из registry (могут быть переопределены плагином)
+    const LoginScreenComponent = componentRegistry.get('LoginScreen') || LoginScreen;
+    const DashboardScreenComponent = componentRegistry.get('DashboardScreen') || DashboardScreen;
+    const SettingsScreenComponent = componentRegistry.get('SettingsScreen') || SettingsScreen;
+    const PlantWorkshopScreenComponent = componentRegistry.get('PlantWorkshopScreen') || PlantWorkshopScreen;
+    const ProcessingScreenComponent = componentRegistry.get('ProcessingScreen') || ProcessingScreen;
+
     switch (currentScreen) {
       case 'dashboard':
         return player ? (
-          <DashboardScreen 
+          <DashboardScreenComponent 
             player={player} 
             onLogout={handleLogout} 
           />
         ) : (
-          <LoginScreen 
+          <LoginScreenComponent 
             onLoginSuccess={handleLogin}
             onSettings={handleOpenSettings}
           />
         );
       case 'settings':
         return (
-          <SettingsScreen 
+          <SettingsScreenComponent 
             onClose={handleCloseSettings}
             onPlantWorkshop={handleOpenPlantWorkshop}
             onProcessing={handleOpenProcessing}
@@ -93,20 +114,20 @@ export default function App() {
         );
       case 'plantWorkshop':
         return (
-          <PlantWorkshopScreen 
+          <PlantWorkshopScreenComponent 
             onClose={handleClosePlantWorkshop}
           />
         );
       case 'processing':
         return (
-          <ProcessingScreen 
+          <ProcessingScreenComponent 
             onClose={handleCloseProcessing}
           />
         );
       case 'login':
       default:
         return (
-          <LoginScreen 
+          <LoginScreenComponent 
             onLoginSuccess={handleLogin}
             onSettings={handleOpenSettings}
           />
