@@ -1,0 +1,2 @@
+export { componentRegistry } from './ComponentRegistry';
+
