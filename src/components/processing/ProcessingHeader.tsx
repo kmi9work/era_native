@@ -12,6 +12,8 @@ interface ProcessingHeaderProps {
   selectedGuild: any;
   isExtractive: boolean;
   onBack: () => void;
+  onOpenMultiMode?: () => void;
+  multiCount?: number;
   styles: ProcessingStyles;
 }
 
@@ -21,8 +23,27 @@ const ProcessingHeader: React.FC<ProcessingHeaderProps> = ({
   selectedGuild,
   isExtractive,
   onBack,
+  onOpenMultiMode,
+  multiCount = 0,
   styles,
 }) => {
+  if (step === 'multi') {
+    return (
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.headerBackButton} activeOpacity={0.7} onPress={onBack}>
+          <Text style={styles.headerBackButtonText}>Назад</Text>
+        </TouchableOpacity>
+        <View style={styles.headerCenterColumn}>
+          <Text style={styles.title}>Много предприятий</Text>
+          <Text style={styles.headerInfoInline}>Добавлено: {multiCount}</Text>
+        </View>
+        <View style={styles.headerRight}>
+          <ScannerStatusBadge style={styles.headerBadge} />
+        </View>
+      </View>
+    );
+  }
+
   if (step === 'processing' && selectedPlant) {
     const titleText = isExtractive ? 'Добыча' : 'Переработка';
     const plantInfo = `${selectedPlant.plant_level?.plant_type?.name} • Ур. ${selectedPlant.plant_level?.level} • ID: ${selectedPlant.id}`;
@@ -39,6 +60,11 @@ const ProcessingHeader: React.FC<ProcessingHeaderProps> = ({
           {guildInfo && <Text style={styles.headerInfoInline}>{guildInfo}</Text>}
         </View>
         <View style={styles.headerRight}>
+          {onOpenMultiMode && (
+            <TouchableOpacity style={styles.headerActionButton} activeOpacity={0.7} onPress={onOpenMultiMode}>
+              <Text style={styles.headerActionButtonText}>Много предприятий</Text>
+            </TouchableOpacity>
+          )}
           <ScannerStatusBadge style={styles.headerBadge} />
         </View>
       </View>
@@ -56,6 +82,11 @@ const ProcessingHeader: React.FC<ProcessingHeaderProps> = ({
           <Text style={styles.headerInfoInline}>{selectedGuild.name}</Text>
         </View>
         <View style={styles.headerRight}>
+          {onOpenMultiMode && (
+            <TouchableOpacity style={styles.headerActionButton} activeOpacity={0.7} onPress={onOpenMultiMode}>
+              <Text style={styles.headerActionButtonText}>Много предприятий</Text>
+            </TouchableOpacity>
+          )}
           <ScannerStatusBadge style={styles.headerBadge} />
         </View>
       </View>
@@ -67,8 +98,15 @@ const ProcessingHeader: React.FC<ProcessingHeaderProps> = ({
       <TouchableOpacity style={styles.headerBackButton} activeOpacity={0.7} onPress={onBack}>
         <Text style={styles.headerBackButtonText}>Назад</Text>
       </TouchableOpacity>
-      <Text style={styles.title}>Переработка</Text>
+      <View style={styles.headerCenterRow}>
+        <Text style={styles.title}>Переработка</Text>
+      </View>
       <View style={styles.headerRight}>
+        {onOpenMultiMode && (
+          <TouchableOpacity style={styles.headerActionButton} activeOpacity={0.7} onPress={onOpenMultiMode}>
+            <Text style={styles.headerActionButtonText}>Много предприятий</Text>
+          </TouchableOpacity>
+        )}
         <ScannerStatusBadge style={styles.headerBadge} />
       </View>
     </View>

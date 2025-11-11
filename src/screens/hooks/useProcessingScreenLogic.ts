@@ -3,7 +3,28 @@ import { Alert } from 'react-native';
 import ApiService from '../../services/api';
 import { useBarcodeScannerContext } from '../../context/BarcodeScannerContext';
 
-type Step = 'guild' | 'plant' | 'processing';
+type Step = 'guild' | 'plant' | 'processing' | 'multi';
+
+interface MultiEntry {
+  plantId: number;
+  plant: any;
+  guild: any | null;
+  isExtractive: boolean;
+  formulaFrom: any[];
+  formulaTo: any[];
+  inputFrom: Record<string, string>;
+  inputTo: Record<string, string>;
+  resultFrom: any[];
+  resultTo: any[];
+  resultChange: any[];
+  fullPlantLevel: any;
+}
+
+interface MultiTotals {
+  resultFrom: any[];
+  resultTo: any[];
+  resultChange: any[];
+}
 
 export const useProcessingScreenLogic = (onClose: () => void) => {
   const [step, setStep] = useState<Step>('guild');
@@ -24,6 +45,13 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
   const [resultTo, setResultTo] = useState<any[]>([]);
   const [resultFrom, setResultFrom] = useState<any[]>([]);
   const [resultChange, setResultChange] = useState<any[]>([]);
+
+  const [multiEntries, setMultiEntries] = useState<MultiEntry[]>([]);
+  const [multiTotals, setMultiTotals] = useState<MultiTotals>({
+    resultFrom: [],
+    resultTo: [],
+    resultChange: [],
+  });
 
   const [allPlantLevels, setAllPlantLevels] = useState<any[]>([]);
   const [resources, setResources] = useState<any[]>([]);
@@ -52,7 +80,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
   const loadActiveEffects = useCallback(async () => {
     try {
-      const data = await ApiService.getActiveGuildEffects();
+      const data = await (ApiService as any).getActiveGuildEffects();
       setActiveEffects(data);
     } catch (error: any) {
       // ignore
@@ -75,12 +103,21 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     [activeEffects],
   );
 
+  const isTechSchoolsOpenForLevel = useCallback(
+    (plantLevelId?: number | null): boolean => {
+      if (!plantLevelId) {
+        return false;
+      }
+      const fullPlantLevel = allPlantLevels.find((pl) => pl.id === plantLevelId);
+      return fullPlantLevel?.tech_schools_open === true || fullPlantLevel?.tech_schools_open === 1;
+    },
+    [allPlantLevels],
+  );
+
   const isTechSchoolsOpen = useCallback((): boolean => {
-    if (!selectedPlant?.plant_level) return false;
-    const plantLevelId = selectedPlant.plant_level.id;
-    const fullPlantLevel = allPlantLevels.find((pl) => pl.id === plantLevelId);
-    return fullPlantLevel?.tech_schools_open === true || fullPlantLevel?.tech_schools_open === 1;
-  }, [allPlantLevels, selectedPlant]);
+    const plantLevelId = selectedPlant?.plant_level?.id;
+    return isTechSchoolsOpenForLevel(plantLevelId);
+  }, [isTechSchoolsOpenForLevel, selectedPlant?.plant_level?.id]);
 
   const getResourceInfo = useCallback(
     (identificator: string) => {
@@ -93,6 +130,90 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     },
     [resources],
   );
+
+  const getEntryMaxResourceCount = useCallback(
+    (entry: MultiEntry, resource: any): number => {
+      if (!entry || !entry.plant?.plant_level?.formulas) {
+        return 0;
+      }
+
+      const formulas = entry.plant.plant_level.formulas || [];
+      if (formulas.length === 0) {
+        return 0;
+      }
+
+      const isProcessing = entry.plant.plant_level?.plant_type?.plant_category?.id === 2;
+      const hasProductionEffect = isProcessing && entry.guild?.name && hasHigherProductionYield(entry.guild.name);
+      const innovationMultiplier = hasProductionEffect ? 1.2 : 1;
+      const techSchoolsOpenState = isProcessing && isTechSchoolsOpenForLevel(entry.plant.plant_level?.id);
+      const techSchoolsMultiplier = techSchoolsOpenState ? 1.5 : 1;
+      const effectMultiplier = innovationMultiplier * techSchoolsMultiplier;
+
+      let maxCount = 0;
+
+      formulas.forEach((formula: any) => {
+        const resourceItem = formula.from?.find((r: any) => r.identificator === resource.identificator);
+
+        if (resourceItem && resourceItem.count && formula.max_product && Array.isArray(formula.max_product)) {
+          const maxProductItem = formula.max_product[0];
+
+          if (maxProductItem && maxProductItem.count) {
+            const toItem = formula.to?.find((t: any) => t.identificator === maxProductItem.identificator);
+
+            if (toItem && toItem.count) {
+              const contribution = (resourceItem.count * maxProductItem.count) / toItem.count;
+              maxCount += contribution;
+            }
+          }
+        }
+      });
+
+      return Math.floor(maxCount * effectMultiplier);
+    },
+    [hasHigherProductionYield, isTechSchoolsOpenForLevel],
+  );
+
+  const logMulti = useCallback(() => {
+    // no-op: отладка выключена
+  }, []);
+
+  const mergeResourceArrays = useCallback((target: any[], source: any[] = [], sign: number = 1): any[] => {
+    const map = new Map<string, any>();
+
+    target.forEach((item: any) => {
+      if (!item?.identificator) {
+        return;
+      }
+      map.set(item.identificator, { ...item });
+    });
+
+    source.forEach((item: any) => {
+      if (!item?.identificator) {
+        return;
+      }
+      const key = item.identificator;
+      const existing = map.get(key);
+      const delta = (item.count || 0) * sign;
+
+      if (existing) {
+        existing.count = (existing.count || 0) + delta;
+        if (!existing.name && item.name) {
+          existing.name = item.name;
+        }
+      } else {
+        map.set(key, {
+          ...item,
+          count: delta,
+        });
+      }
+    });
+
+    return Array.from(map.values()).filter((item) => (item.count || 0) !== 0);
+  }, []);
+
+  const normalizeResourceArray = useCallback((array: any[] = []): any[] => {
+    return array.filter((item) => item && typeof item.count === 'number');
+  }, []);
 
   const sortGuildPlants = useCallback((data: any[]) => {
     return [...data].sort((a, b) => {
@@ -224,107 +345,138 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     [hasHigherProductionYield, isTechSchoolsOpen, selectedGuild?.name, selectedPlant],
   );
 
+  const fetchPlantDetails = useCallback(
+    async (plantId: number) => {
+      const data = await ApiService.getPlant(plantId);
+
+      if (!data.plant_level) {
+        throw new Error('У предприятия нет уровня');
+      }
+
+      const plantLevelId = data.plant_level.id;
+      const fullPlantLevel = allPlantLevels.find((pl) => pl.id === plantLevelId);
+
+      if (!fullPlantLevel) {
+        throw new Error('Информация об уровне предприятия не найдена');
+      }
+
+      const isExtractive = data.plant_level.plant_type?.plant_category?.id === 1;
+
+      const guild = data.economic_subject_id
+        ? guilds.find((g) => g.id === data.economic_subject_id) || null
+        : null;
+
+      let formulaFromData: any[] = [];
+      let formulaToData: any[] = fullPlantLevel.formula_to || [];
+
+      let enrichedPlant: any;
+
+      if (isExtractive) {
+        enrichedPlant = {
+          ...data,
+          plant_level: {
+            ...data.plant_level,
+            formulas: fullPlantLevel.formulas || [],
+            formula_conversion: {
+              from: [],
+              to: fullPlantLevel.formula_to || [],
+            },
+          },
+          economic_subject_id: data.economic_subject_id,
+          economic_subject_type: data.economic_subject_type,
+        };
+        formulaFromData = [];
+      } else {
+        if (!fullPlantLevel.formulas || fullPlantLevel.formulas.length === 0) {
+          throw new Error('У предприятия нет формул переработки');
+        }
+
+        if (!fullPlantLevel.formula_from || !fullPlantLevel.formula_to) {
+          throw new Error('У предприятия нет формул переработки');
+        }
+
+        enrichedPlant = {
+          ...data,
+          plant_level: {
+            ...data.plant_level,
+            formulas: fullPlantLevel.formulas,
+            formula_conversion: {
+              from: fullPlantLevel.formula_from,
+              to: fullPlantLevel.formula_to,
+            },
+          },
+          economic_subject_id: data.economic_subject_id,
+          economic_subject_type: data.economic_subject_type,
+        };
+
+        formulaFromData = fullPlantLevel.formula_from || [];
+        formulaToData = fullPlantLevel.formula_to || [];
+      }
+
+      const defaultInputFrom: Record<string, string> = {};
+      const defaultInputTo: Record<string, string> = {};
+
+      (formulaFromData || []).forEach((item: any) => {
+        if (item?.identificator) {
+          defaultInputFrom[item.identificator] = '';
+        }
+      });
+
+      (formulaToData || []).forEach((item: any) => {
+        if (item?.identificator) {
+          defaultInputTo[item.identificator] = '';
+        }
+      });
+
+      return {
+        plant: enrichedPlant,
+        guild,
+        isExtractive,
+        formulaFrom: formulaFromData || [],
+        formulaTo: formulaToData || [],
+        defaultInputFrom,
+        defaultInputTo,
+        fullPlantLevel,
+      };
+    },
+    [allPlantLevels, guilds],
+  );
+
   const loadPlantAndNavigateToProcessing = useCallback(
     async (plantId: string) => {
       setLoading(true);
       try {
-        const data = await ApiService.getPlant(parseInt(plantId, 10));
-
-        if (!data.plant_level) {
-          Alert.alert('Ошибка', 'У предприятия нет уровня');
-          setLoading(false);
-          return;
+        const numericId = parseInt(plantId, 10);
+        if (Number.isNaN(numericId)) {
+          throw new Error('Некорректный идентификатор предприятия');
         }
 
         if (guilds.length === 0) {
           await loadGuilds();
         }
 
-        if (data.economic_subject_id) {
-          const guild = guilds.find((g) => g.id === data.economic_subject_id);
-          if (guild) {
-            setSelectedGuild(guild);
+        const details = await fetchPlantDetails(numericId);
 
-            if (!selectedGuild || selectedGuild.id !== guild.id || guildPlants.length === 0) {
-              try {
-                const plantsData = await ApiService.getGuildPlants(guild.id);
-                setGuildPlants(sortGuildPlants(plantsData));
-              } catch (plantsError: any) {
-                // Игнорируем ошибку, предприятия можно будет загрузить вручную из интерфейса
-              }
+        if (details.guild) {
+          setSelectedGuild(details.guild);
+
+          if (!selectedGuild || selectedGuild.id !== details.guild.id || guildPlants.length === 0) {
+            try {
+              const plantsData = await ApiService.getGuildPlants(details.guild.id);
+              setGuildPlants(sortGuildPlants(plantsData));
+            } catch (plantsError: any) {
+              // Игнорируем ошибку, предприятия можно будет загрузить вручную из интерфейса
             }
           }
-        }
-
-        const isExtractive = data.plant_level.plant_type?.plant_category?.id === 1;
-        const plantLevelId = data.plant_level.id;
-        const fullPlantLevel = allPlantLevels.find((pl) => pl.id === plantLevelId);
-
-        if (!fullPlantLevel) {
-          Alert.alert('Ошибка', 'Информация об уровне предприятия не найдена');
-          setLoading(false);
-          return;
-        }
-
-        if (isExtractive) {
-          const enrichedPlant = {
-            ...data,
-            plant_level: {
-              ...data.plant_level,
-              formulas: fullPlantLevel.formulas || [],
-              formula_conversion: {
-                from: [],
-                to: fullPlantLevel.formula_to || [],
-              },
-            },
-            economic_subject_id: data.economic_subject_id,
-            economic_subject_type: data.economic_subject_type,
-          };
-
-          setSelectedPlant(enrichedPlant);
-          setFormulaFrom([]);
-          setFormulaTo(fullPlantLevel.formula_to || []);
-          setInputFrom({});
-          setInputTo({});
         } else {
-          if (!fullPlantLevel.formulas || fullPlantLevel.formulas.length === 0) {
-            Alert.alert('Ошибка', 'У предприятия нет формул переработки');
-            setLoading(false);
-            return;
-          }
-
-          const enrichedPlant = {
-            ...data,
-            plant_level: {
-              ...data.plant_level,
-              formulas: fullPlantLevel.formulas,
-              formula_conversion: {
-                from: fullPlantLevel.formula_from,
-                to: fullPlantLevel.formula_to,
-              },
-            },
-            economic_subject_id: data.economic_subject_id,
-            economic_subject_type: data.economic_subject_type,
-          };
-
-          setSelectedPlant(enrichedPlant);
-          setFormulaFrom(fullPlantLevel.formula_from);
-          setFormulaTo(fullPlantLevel.formula_to);
-
-          const emptyFrom: { [key: string]: string } = {};
-          const emptyTo: { [key: string]: string } = {};
-
-          fullPlantLevel.formula_from.forEach((item: any) => {
-            emptyFrom[item.identificator] = '';
-          });
-
-          fullPlantLevel.formula_to.forEach((item: any) => {
-            emptyTo[item.identificator] = '';
-          });
-
-          setInputFrom(emptyFrom);
-          setInputTo(emptyTo);
+          setSelectedGuild(null);
         }
+
+        setSelectedPlant(details.plant);
+        setFormulaFrom(details.formulaFrom);
+        setFormulaTo(details.formulaTo);
+        setInputFrom(details.defaultInputFrom);
+        setInputTo(details.defaultInputTo);
 
         setStep('processing');
       } catch (error: any) {
@@ -346,15 +498,307 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
         setLoading(false);
       }
     },
-    [allPlantLevels, guildPlants, guilds, loadGuilds, selectedGuild, sortGuildPlants],
+    [fetchPlantDetails, guildPlants, guilds, loadGuilds, selectedGuild, sortGuildPlants],
   );
+
+  const resetMultiTotals = useCallback(() => {
+    setMultiTotals({
+      resultFrom: [],
+      resultTo: [],
+      resultChange: [],
+    });
+  }, []);
+
+  const addPlantToMulti = useCallback(
+    async (plantId: string) => {
+      const numericId = parseInt(plantId, 10);
+      if (Number.isNaN(numericId)) {
+        Alert.alert('Ошибка', 'Некорректный штрихкод');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        if (guilds.length === 0) {
+          await loadGuilds();
+        }
+
+        const details = await fetchPlantDetails(numericId);
+
+        const extractionMultiplier =
+          details.isExtractive && details.guild?.name && hasHigherExtractionYield(details.guild.name) ? 1.2 : 1;
+
+        const initialResultTo = details.isExtractive
+          ? (details.formulaTo || []).map((resource: any) => ({
+              ...resource,
+              count: Math.floor((resource.count || 0) * extractionMultiplier),
+            }))
+          : [];
+
+        const newEntry: MultiEntry = {
+          plantId: numericId,
+          plant: details.plant,
+          guild: details.guild,
+          isExtractive: details.isExtractive,
+          formulaFrom: details.formulaFrom || [],
+          formulaTo: details.formulaTo || [],
+          inputFrom: { ...details.defaultInputFrom },
+          inputTo: { ...details.defaultInputTo },
+          resultFrom: [],
+          resultTo: initialResultTo,
+          resultChange: [],
+          fullPlantLevel: details.fullPlantLevel,
+        };
+
+        setMultiEntries((prev) => {
+          if (prev.some((entry) => entry.plantId === numericId)) {
+            return prev;
+          }
+          return [...prev, newEntry];
+        });
+
+        resetMultiTotals();
+      } catch (error: any) {
+        const message = error?.message || 'Не удалось загрузить предприятие';
+        Alert.alert('Ошибка', message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [fetchPlantDetails, guilds, hasHigherExtractionYield, loadGuilds, resetMultiTotals],
+  );
+
+  const handleOpenMultiMode = useCallback(() => {
+    if (selectedPlant) {
+      const plantId = selectedPlant.id;
+
+      const plantLevelId = selectedPlant.plant_level?.id;
+      const fullPlantLevel = plantLevelId
+        ? allPlantLevels.find((pl) => pl.id === plantLevelId)
+        : null;
+
+      const isExtractive = selectedPlant.plant_level?.plant_type?.plant_category?.id === 1;
+      const extractionMultiplier =
+        isExtractive && selectedGuild?.name && hasHigherExtractionYield(selectedGuild.name) ? 1.2 : 1;
+
+      const initialResultTo = isExtractive
+        ? (formulaTo || []).map((resource: any) => ({
+            ...resource,
+            count: Math.floor((resource.count || 0) * extractionMultiplier),
+          }))
+        : [];
+
+      const entryFromCurrent: MultiEntry = {
+        plantId,
+        plant: selectedPlant,
+        guild: selectedGuild,
+        isExtractive,
+        formulaFrom: formulaFrom ? [...formulaFrom] : [],
+        formulaTo: formulaTo ? [...formulaTo] : [],
+        inputFrom: { ...inputFrom },
+        inputTo: { ...inputTo },
+        resultFrom: [],
+        resultTo: initialResultTo,
+        resultChange: [],
+        fullPlantLevel: fullPlantLevel || null,
+      };
+
+      setMultiEntries((prev) => {
+        if (prev.some((entry) => entry.plantId === plantId)) {
+          return prev;
+        }
+        return [...prev, entryFromCurrent];
+      });
+      resetMultiTotals();
+    }
+
+    setStep('multi');
+  }, [
+    allPlantLevels,
+    formulaFrom,
+    formulaTo,
+    hasHigherExtractionYield,
+    inputFrom,
+    inputTo,
+    resetMultiTotals,
+    selectedGuild,
+    selectedPlant,
+  ]);
+
+  const removeMultiEntry = useCallback(
+    (plantId: number) => {
+      setMultiEntries((prev) => prev.filter((entry) => entry.plantId !== plantId));
+      resetMultiTotals();
+    },
+    [resetMultiTotals],
+  );
+
+  const clearMultiEntries = useCallback(() => {
+    setMultiEntries([]);
+    resetMultiTotals();
+  }, [resetMultiTotals]);
+
+  const setMultiEntryInputFromValue = useCallback(
+    (plantId: number, identificator: string, value: string) => {
+      setMultiEntries((prev) =>
+        prev.map((entry) =>
+          entry.plantId === plantId
+            ? {
+                ...entry,
+                inputFrom: {
+                  ...entry.inputFrom,
+                  [identificator]: value,
+                },
+              }
+            : entry,
+        ),
+      );
+      resetMultiTotals();
+    },
+    [resetMultiTotals],
+  );
+
+  const calculateMultiFrom = useCallback(() => {
+    setMultiEntries((prevEntries) => {
+      if (prevEntries.length === 0) {
+        Alert.alert('Список пуст', 'Добавьте предприятия с помощью сканирования.');
+        return prevEntries;
+      }
+
+      let aggregatedResultTo: any[] = [];
+      let aggregatedResultFrom: any[] = [];
+      let aggregatedResultChange: any[] = [];
+
+      const updatedEntries = prevEntries.map((entry) => {
+        // отладка отключена
+
+        if (entry.isExtractive) {
+          const extractionMultiplier =
+            entry.guild?.name && hasHigherExtractionYield(entry.guild.name) ? 1.2 : 1;
+          const resultTo = (entry.formulaTo || []).map((resource: any) => ({
+            ...resource,
+            count: Math.floor((resource.count || 0) * extractionMultiplier),
+          }));
+
+          aggregatedResultTo = mergeResourceArrays(aggregatedResultTo, normalizeResourceArray(resultTo));
+
+          // отладка отключена
+
+          return {
+            ...entry,
+            resultFrom: [],
+            resultTo,
+            resultChange: [],
+          };
+        }
+
+        const formulas = entry.plant?.plant_level?.formulas || [];
+        if (formulas.length === 0) {
+          // отладка отключена
+          return {
+            ...entry,
+            resultFrom: [],
+            resultTo: [],
+            resultChange: [],
+          };
+        }
+
+        const requestArray = Object.entries(entry.inputFrom || {})
+          .map(([identificator, value]) => {
+            const matchedResource = entry.formulaFrom.find((r: any) => r.identificator === identificator);
+            return {
+              identificator,
+              count: parseInt((value as string) || '0', 10),
+              name: matchedResource?.name || matchedResource?.identificator || identificator,
+            };
+          })
+          .filter((item) => item.count > 0);
+
+        if (requestArray.length === 0) {
+          // отладка отключена
+          return {
+            ...entry,
+            resultFrom: [],
+            resultTo: [],
+            resultChange: [],
+          };
+        }
+
+        const requestCopy = JSON.parse(JSON.stringify(requestArray));
+        let resultingFrom: any[] = [];
+        let resultingTo: any[] = [];
+
+        formulas.forEach((formula: any) => {
+          const { from, to } = countRequest(formula, requestCopy, 'from');
+          if (from.length > 0) {
+            resArraySum(resultingFrom, from);
+            resArraySum(requestCopy, from, -1);
+          }
+          if (to.length > 0) {
+            resArraySum(resultingTo, to);
+          }
+        });
+
+        const guildName = entry.guild?.name;
+        const isProcessing = entry.plant?.plant_level?.plant_type?.plant_category?.id === 2;
+        const hasProductionEffect = isProcessing && guildName && hasHigherProductionYield(guildName);
+        const techSchoolsOpenState = isTechSchoolsOpenForLevel(entry.plant?.plant_level?.id);
+        const effectBonus = (hasProductionEffect ? 1.2 : 1) * (techSchoolsOpenState ? 1.5 : 1);
+
+        resultingTo = resultingTo.map((res: any) => ({
+          ...res,
+          count: Math.floor((res.count || 0) * effectBonus),
+        }));
+
+        const leftovers = requestCopy.filter((item: any) => item.count > 0).map((item: any) => ({ ...item }));
+
+        aggregatedResultTo = mergeResourceArrays(aggregatedResultTo, normalizeResourceArray(resultingTo));
+        aggregatedResultChange = mergeResourceArrays(aggregatedResultChange, normalizeResourceArray(leftovers));
+
+        // отладка отключена
+
+        return {
+          ...entry,
+          resultFrom: [],
+          resultTo: resultingTo,
+          resultChange: leftovers,
+        };
+      });
+
+      setMultiTotals({
+        resultFrom: aggregatedResultFrom,
+        resultTo: aggregatedResultTo,
+        resultChange: aggregatedResultChange,
+      });
+
+      // отладка отключена
+
+      return updatedEntries;
+    });
+  }, [
+    countRequest,
+    hasHigherExtractionYield,
+    hasHigherProductionYield,
+    isTechSchoolsOpenForLevel,
+    mergeResourceArrays,
+    normalizeResourceArray,
+    resArraySum,
+  ]);
 
   const handleBarcodeScanned = useCallback(
     (id: string) => {
+      if (step === 'multi') {
+        addPlantToMulti(id);
+        return;
+      }
+
       const enterpriseId = parseInt(id, 10);
+      if (Number.isNaN(enterpriseId)) {
+        return;
+      }
       loadPlantAndNavigateToProcessing(enterpriseId.toString());
     },
-    [loadPlantAndNavigateToProcessing],
+    [addPlantToMulti, loadPlantAndNavigateToProcessing, step],
   );
 
   useEffect(() => {
@@ -648,6 +1092,14 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       setStep('guild');
       setSelectedGuild(null);
       setGuildPlants([]);
+    } else if (step === 'multi') {
+      if (selectedPlant) {
+        setStep('processing');
+      } else if (selectedGuild) {
+        setStep('plant');
+      } else {
+        setStep('guild');
+      }
     } else if (step === 'processing') {
       setStep('plant');
       setSelectedPlant(null);
@@ -659,7 +1111,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       setResultFrom([]);
       setResultChange([]);
     }
-  }, [onClose, step]);
+  }, [onClose, selectedGuild, selectedPlant, step]);
 
   useEffect(() => {
     loadAllPlantLevels();
@@ -749,6 +1201,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     helpers: {
       getResourceInfo,
       getMaxResourceCount,
+      getEntryMaxResourceCount,
     },
     processingMeta,
     handlers: {
@@ -757,6 +1210,15 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       handleBack,
       calculateFrom,
       calculateTo,
+      openMultiMode: handleOpenMultiMode,
+      removeMultiEntry,
+      clearMultiEntries,
+      setMultiEntryInputFromValue,
+      calculateMultiFrom,
+    },
+    multi: {
+      entries: multiEntries,
+      totals: multiTotals,
     },
   };
 };
