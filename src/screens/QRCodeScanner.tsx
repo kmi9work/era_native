@@ -24,8 +24,6 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onScan, onClose }) => {
   }, []);
 
   useEffect(() => {
-    console.log('Device status:', device ? 'found' : 'not found');
-    console.log('Device details:', device);
   }, [device]);
 
   const requestCameraPermission = async () => {
@@ -43,7 +41,7 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onScan, onClose }) => {
         onClose();
       }
     } catch (err) {
-      console.warn(err);
+      // ignore
       Alert.alert('Ошибка', 'Произошла ошибка при запросе разрешения на камеру.');
       onClose();
     }
@@ -56,7 +54,6 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onScan, onClose }) => {
         setScanned(true);
         const value = codes[0].value;
         if (value) {
-          console.log('QR-код отсканирован:', value);
           onScan(value);
         }
       }

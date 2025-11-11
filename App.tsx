@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, StatusBar } from 'react-native';
+import { BarcodeScannerProvider } from './src/context/BarcodeScannerContext';
 
 // Импорт экранов ядра
 import LoginScreen from './src/screens/LoginScreen';
@@ -136,10 +137,12 @@ export default function App() {
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f5f5f5" />
-      {renderScreen()}
-    </View>
+    <BarcodeScannerProvider>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#f5f5f5" />
+        {renderScreen()}
+      </View>
+    </BarcodeScannerProvider>
   );
 }
 

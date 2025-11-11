@@ -8,18 +8,14 @@ export class PrinterSettings {
       const ip = await AsyncStorage.getItem(PRINTER_IP_KEY);
       return ip || '';
     } catch (error) {
-      console.error('Failed to get printer IP from storage:', error);
-      return '';
+      return '192.168.1.147';
     }
   }
 
   static async setPrinterIp(ip: string): Promise<void> {
     try {
       await AsyncStorage.setItem(PRINTER_IP_KEY, ip);
-    } catch (error) {
-      console.error('Failed to save printer IP to storage:', error);
-      throw error;
-    }
+    } catch (error) {}
   }
 
   static isValidIp(ip: string): boolean {

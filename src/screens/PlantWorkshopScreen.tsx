@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,14 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  TextInput,
   ActivityIndicator,
 } from 'react-native';
 import ApiService from '../services/api';
 import { Guild, AvailablePlaceInfo, PlantLevel, PlantPlace } from '../types';
 import ResourceItem from './ResourceItem';
 import { BrotherPrinterService } from '../services/BrotherPrinterService';
+import ScannerStatusBadge from '../components/ScannerStatusBadge';
+import { useBarcodeScannerContext } from '../context/BarcodeScannerContext';
 
 interface PlantWorkshopScreenProps {
   onClose: () => void;
@@ -26,6 +27,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
   const [loading, setLoading] = useState(false);
   const [resources, setResources] = useState<any[]>([]);
+
+  const { addListener } = useBarcodeScannerContext();
+  const lastHandledBarcodeRef = useRef<string | null>(null);
 
   // Для нового предприятия
   const [availablePlaces, setAvailablePlaces] = useState<AvailablePlaceInfo[]>([]);
@@ -41,11 +45,6 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   const [upgradeCost, setUpgradeCost] = useState<Record<string, number> | null>(null);
   const [guildPlants, setGuildPlants] = useState<any[]>([]);
   const [selectedPlantForUpgrade, setSelectedPlantForUpgrade] = useState<any>(null);
-  const [digitSequence, setDigitSequence] = useState('');
-  const [sequenceTimeout, setSequenceTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
-
-  // Для модального окна ошибок
-  const scannerInputRef = useRef<TextInput>(null);
 
   // Константы категорий (должны совпадать с бэкендом)
   const EXTRACTIVE = 1;
@@ -56,21 +55,12 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     loadResources();
   }, []);
 
-  // Очистка таймаута при размонтировании
-  useEffect(() => {
-    return () => {
-      if (sequenceTimeout) {
-        clearTimeout(sequenceTimeout);
-      }
-    };
-  }, [sequenceTimeout]);
-
   const loadGuilds = async () => {
     setLoading(true);
     try {
       const data = await ApiService.getGuilds();
-      // Сортируем гильдии по названию
-      const sortedData = data.sort((a, b) => a.name.localeCompare(b.name));
+      // Сортируем гильдии по ID
+      const sortedData = data.sort((a, b) => a.id - b.id);
       setGuilds(sortedData);
     } catch (error: any) {
       Alert.alert('Ошибка', error.message);
@@ -83,9 +73,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     try {
       const data = await ApiService.getAllResources();
       setResources(data);
-    } catch (error: any) {
-      console.error('Failed to load resources:', error);
-    }
+    } catch (error: any) {}
   };
 
   const getResourceInfo = (identificator: string) => {
@@ -103,28 +91,31 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   };
 
   // Функция для загрузки предприятия по ID и перехода к улучшению
-  const loadPlantAndNavigateToUpgrade = async (plantId: string) => {
+  const loadPlantAndNavigateToUpgrade = useCallback(async (plantId: string) => {
     try {
-      console.log('=== LOADING PLANT DEBUG ===');
-      console.log('Plant ID string:', plantId);
-      console.log('Parsed ID:', parseInt(plantId));
-      
       const data = await ApiService.getPlant(parseInt(plantId));
-      console.log('Plant data loaded:', data);
       
       if (data && data.economic_subject_id) {
-        console.log('Plant data is valid, economic_subject_id:', data.economic_subject_id);
+        const economicSubject = data.economic_subject;
+
+        // Находим гильдию по ID (список мог ещё не успеть загрузиться)
+        let guild = guilds.find(g => g.id === data.economic_subject_id);
         
-        // Находим гильдию по ID
-        const guild = guilds.find(g => g.id === data.economic_subject_id);
-        console.log('Available guilds:', guilds.map(g => ({ id: g.id, name: g.name })));
-        console.log('Looking for guild with ID:', data.economic_subject_id);
-        
+        if (!guild && economicSubject) {
+          const derivedGuild: Guild = {
+            id: economicSubject.id ?? data.economic_subject_id,
+            name: economicSubject.name || economicSubject.title || `Гильдия #${data.economic_subject_id}`,
+          };
+          guild = derivedGuild;
+          setGuilds(prev => {
+            const exists = prev.some(g => g.id === derivedGuild.id);
+            return exists ? prev : [...prev, derivedGuild];
+          });
+        }
+
         if (guild) {
           setSelectedGuild(guild);
-          console.log('Guild found:', guild.name);
         } else {
-          console.error('Guild not found for ID:', data.economic_subject_id);
           Alert.alert('Ошибка', 'Не удалось найти гильдию для предприятия');
           return;
         }
@@ -142,9 +133,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
           
           if (nextLevel) {
             setUpgradeCost(nextLevel.price);
-            console.log('Upgrade cost loaded:', nextLevel.price);
           } else {
-            console.log('No next level found, enterprise at max level');
             Alert.alert('Информация', 'Предприятие уже максимального уровня');
             return;
           }
@@ -152,18 +141,66 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         
         // Переходим к странице улучшения
         setStep('upgrade');
-        console.log('Navigated to upgrade step');
       } else {
-        console.error('Invalid plant data or no economic_subject_id');
-        console.log('Data received:', data);
-        Alert.alert('Ошибка', 'Не удалось загрузить данные предприятия');
+        Alert.alert(
+          'Ошибка', 
+          'Не удалось загрузить данные предприятия',
+          [
+            {
+              text: 'ОК',
+              onPress: () => setStep('guild'),
+            },
+          ]
+        );
       }
     } catch (error) {
-      console.error('Error loading plant:', error);
-      Alert.alert('Ошибка', 'Предприятие с таким ID не найдено');
+      Alert.alert(
+        'Ошибка', 
+        'Предприятие с таким ID не найдено',
+        [
+          {
+            text: 'ОК',
+            onPress: () => setStep('guild'),
+          },
+        ]
+      );
     }
-  };
+  }, [guilds]);
 
+  // Обработчик завершения сканирования штрихкода
+  const handleBarcodeScanned = useCallback((id: string) => {
+    const enterpriseId = parseInt(id);
+    console.log('[PlantWorkshopScreen] Scan received:', enterpriseId);
+    setPlantId(enterpriseId.toString());
+    loadPlantAndNavigateToUpgrade(enterpriseId.toString());
+    setStep('upgrade'); // Переходим к экрану улучшения
+  }, [loadPlantAndNavigateToUpgrade]);
+
+  useEffect(() => {
+    console.log('[PlantWorkshopScreen] Register listener');
+    const unsubscribe = addListener('plantWorkshop', (code) => {
+      console.log('[PlantWorkshopScreen] Listener triggered:', code, 'current step:', step);
+      if (!code.trim()) {
+        return;
+      }
+      if (lastHandledBarcodeRef.current === code) {
+        return;
+      }
+      lastHandledBarcodeRef.current = code;
+      handleBarcodeScanned(code);
+      setTimeout(() => {
+        if (lastHandledBarcodeRef.current === code) {
+          lastHandledBarcodeRef.current = null;
+        }
+      }, 500);
+    });
+
+    return () => {
+      console.log('[PlantWorkshopScreen] Unregister listener');
+      unsubscribe();
+      lastHandledBarcodeRef.current = null;
+    };
+  }, [addListener, handleBarcodeScanned, step]);
 
   const handleSelectScenario = async (scenario: 'new' | 'upgrade') => {
     if (scenario === 'new') {
@@ -183,15 +220,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         setLoading(true);
         try {
           const plants = await ApiService.getGuildPlants(selectedGuild.id);
-          // Сортируем предприятия по названию типа предприятия
-          const sortedPlants = plants.sort((a, b) => {
-            const nameA = a.plant_level?.plant_type?.name || '';
-            const nameB = b.plant_level?.plant_type?.name || '';
-            return nameA.localeCompare(nameB);
-          });
+          const sortedPlants = plants.sort((a, b) => (a.id || 0) - (b.id || 0));
           setGuildPlants(sortedPlants);
         } catch (error: any) {
-          console.error('Failed to load guild plants:', error);
         } finally {
           setLoading(false);
         }
@@ -244,23 +275,16 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       });
 
 
-      console.log('=== RAW RESPONSE DEBUG ===');
-      console.log('CreatedPlant raw response:', JSON.stringify(createdPlant, null, 2));
-      console.log('CreatedPlant type:', typeof createdPlant);
-      console.log('CreatedPlant keys:', Object.keys(createdPlant || {}));
-      
       // Проверяем различные возможные форматы ответа
       let plantData = createdPlant;
       
       // Rails может возвращать данные в разных форматах
       if (createdPlant && createdPlant.plant) {
         plantData = createdPlant.plant;
-        console.log('Using createdPlant.plant:', plantData);
       } else if (createdPlant && createdPlant.data) {
         plantData = createdPlant.data;
-        console.log('Using createdPlant.data:', plantData);
       } else {
-        console.log('Using createdPlant directly:', plantData);
+        plantData = createdPlant;
       }
 
       // Проверяем, что мы получили корректный ответ
@@ -278,17 +302,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       // Форматируем ID в формат %09d (9 цифр с ведущими нулями)
       const formattedPlantId = plantData.id.toString();
       
-      console.log('=== PLANT WORKSHOP DEBUG ===');
-      console.log('PlantData:', plantData);
-      console.log('PlantData.id:', plantData.id);
-      console.log('FormattedPlantId:', formattedPlantId);
-      
       // Получаем информацию о гильдии и регионе
       const guildName = selectedGuild?.name || 'Неизвестная гильдия';
       const regionName = placeToUse?.name || 'Неизвестный регион';
-      
-      console.log('GuildName:', guildName);
-      console.log('RegionName:', regionName);
       
       // Пытаемся напечатать штрихкод с полной информацией
       const printResult = await BrotherPrinterService.printBarcode(plantData.id, guildName, regionName);
@@ -305,7 +321,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         // Печать неудачна - предлагаем выбор
         // Не выводим ошибку в консоль для OpenStreamFailure
         if (!printResult.error || !printResult.error.includes('OpenStreamFailure')) {
-          console.error('Ошибка печати:', printResult.error);
+          Alert.alert('Ошибка', printResult.error);
         }
         
         Alert.alert(
@@ -319,11 +335,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
                 // Удаляем предприятие
                 try {
                   await ApiService.deletePlant(plantData.id);
-                  console.log('Предприятие удалено после отмены');
-                } catch (deleteError) {
-                  console.error('Ошибка удаления предприятия:', deleteError);
-                  Alert.alert('Ошибка', 'Не удалось удалить предприятие. Обратитесь к администратору.');
-                }
+                } catch (deleteError: any) {}
               }
             },
             {
@@ -343,11 +355,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         );
       }
     } catch (error: any) {
-      console.error('Ошибка создания предприятия:', error);
-      
-      // Логируем ошибку для детального анализа
-      
-      Alert.alert('Ошибка', error.message);
+      Alert.alert('Ошибка', error.message || 'Не удалось создать предприятие');
+      setLoading(false);
+      return;
     } finally {
       setLoading(false);
     }
@@ -419,11 +429,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
               // Обновляем список предприятий
               if (selectedGuild) {
                 const plants = await ApiService.getGuildPlants(selectedGuild.id);
-                const sortedPlants = plants.sort((a, b) => {
-                  const nameA = a.plant_level?.plant_type?.name || '';
-                  const nameB = b.plant_level?.plant_type?.name || '';
-                  return nameA.localeCompare(nameB);
-                });
+                const sortedPlants = plants.sort((a, b) => (a.id || 0) - (b.id || 0));
                 setGuildPlants(sortedPlants);
               }
             } catch (error: any) {
@@ -482,79 +488,14 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   const renderGuildSelection = () => (
     <View style={styles.content}>
       <Text style={styles.stepTitle}>Выберите гильдию</Text>
-      <Text style={styles.stepSubtitle}>Или отсканируйте штрихкод для быстрого перехода к улучшению предприятия</Text>
+      <Text style={styles.stepSubtitle}>Или отсканируйте штрихкод для быстрого перехода к переработке</Text>
       
-      {/* Индикатор состояния сканера */}
-      <View style={styles.scannerStatus}>
-        <Text style={styles.scannerStatusText}>
-          Сканер готов к работе
+      <View style={styles.scanHintBlock}>
+        <Text style={styles.scanHintText}>
+          Сканер всегда активен. Отсканируйте штрихкод предприятия, и система сразу перейдёт к экрану
+          улучшения с кнопкой «Улучшить».
         </Text>
-        {digitSequence.length > 0 && (
-          <Text style={styles.scannerStatusText}>
-            Введено: {digitSequence.length}/9 цифр: {digitSequence}
-          </Text>
-        )}
       </View>
-      
-      {/* Скрытый TextInput для захвата ввода от сканера */}
-      <TextInput
-        ref={scannerInputRef}
-        style={{ position: 'absolute', top: -1000, left: -1000, opacity: 0, height: 1, width: 1 }}
-        pointerEvents="none"
-        value=""
-        onChangeText={(text) => {
-          console.log('=== SCANNER INPUT DEBUG ===');
-          console.log('Received text:', text);
-          console.log('Current digitSequence:', digitSequence);
-          
-          // Фильтруем только цифры из входящего текста
-          const newDigits = text.replace(/[^0-9]/g, '');
-          console.log('New digits only:', newDigits);
-          
-          // Добавляем новые цифры к существующей последовательности
-          const newSequence = digitSequence + newDigits;
-          setDigitSequence(newSequence);
-          console.log('Updated sequence:', newSequence);
-          
-          // Если введено 9 цифр, переходим к улучшению
-          if (newSequence.length >= 9) {
-            const fullId = newSequence.substring(0, 9); // Берем первые 9 цифр
-            console.log('9 digits detected, navigating to upgrade with ID:', fullId);
-            
-            // Сохраняем ID как строку для отображения, но используем числовой ID для API
-            const enterpriseId = parseInt(fullId);
-            console.log('Full ID string:', fullId);
-            console.log('Parsed enterprise ID:', enterpriseId);
-            
-            setPlantId(enterpriseId.toString());
-            
-            // Загружаем данные предприятия и переходим к улучшению
-            loadPlantAndNavigateToUpgrade(enterpriseId.toString());
-            
-            setDigitSequence(''); // Сбрасываем последовательность
-            // Принудительно очищаем поле
-            scannerInputRef.current?.setNativeProps({ text: '' });
-          } else {
-            // Очищаем поле для следующего формирования последовательности
-            scannerInputRef.current?.setNativeProps({ text: '' });
-            
-            // Устанавливаем таймаут для сброса последовательности (2 секунды)
-            if (sequenceTimeout) {
-              clearTimeout(sequenceTimeout);
-            }
-            const timeout = setTimeout(() => {
-              console.log('Sequence timeout, resetting...');
-              setDigitSequence('');
-              setSequenceTimeout(null);
-            }, 2000);
-            setSequenceTimeout(timeout);
-          }
-        }}
-        keyboardType="numeric"
-        maxLength={9}
-        showSoftInputOnFocus={false}
-        caretHidden={true}
-      />
       
       {loading ? (
         <ActivityIndicator size="large" color="#1976d2" />
@@ -884,7 +825,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
             <Text style={styles.titleInline}>Улучшение:</Text>
             <Text style={styles.headerInfoInline}>{plantInfo}</Text>
           </View>
-          <View style={styles.headerSpacer} />
+          <View style={styles.headerRight}>
+            <ScannerStatusBadge style={styles.headerBadge} />
+          </View>
         </View>
       );
     }
@@ -900,7 +843,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
             <Text style={styles.titleInline}>Предприятия:</Text>
             <Text style={styles.headerInfoInline}>{selectedGuild.name}</Text>
           </View>
-          <View style={styles.headerSpacer} />
+          <View style={styles.headerRight}>
+            <ScannerStatusBadge style={styles.headerBadge} />
+          </View>
         </View>
       );
     }
@@ -912,41 +857,15 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
           <Text style={styles.headerBackButtonText}>Назад</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Предприятия</Text>
-        <View style={styles.headerSpacer} />
+        <View style={styles.headerRight}>
+          <ScannerStatusBadge style={styles.headerBadge} />
+        </View>
       </View>
     );
   };
 
   return (
-    <View 
-      style={styles.container}
-      onKeyPress={(event) => {
-        console.log('=== CONTAINER KEYPRESS DEBUG ===');
-        console.log('Key pressed:', event.key);
-        console.log('Current step:', step);
-        
-        if (step === 'guild') {
-          if (/[0-9]/.test(event.key)) {
-            // Добавляем новый символ к существующей последовательности
-            const newSequence = digitSequence + event.key;
-            setDigitSequence(newSequence);
-            console.log('Container - Updated sequence:', newSequence);
-            
-            if (newSequence.length === 9) {
-              console.log('9 digits detected in container, navigating to upgrade');
-              
-              const enterpriseId = parseInt(newSequence);
-              console.log('Container - Full ID string:', newSequence);
-              console.log('Container - Parsed enterprise ID:', enterpriseId);
-              
-              setPlantId(enterpriseId.toString());
-              loadPlantAndNavigateToUpgrade(enterpriseId.toString());
-              setDigitSequence('');
-            }
-          }
-        }
-      }}
-    >
+    <View style={styles.container}>
       {renderHeader()}
 
       {step === 'guild' && renderGuildSelection()}
@@ -970,6 +889,15 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 20,
     backgroundColor: '#1976d2',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 52,
+    justifyContent: 'flex-end',
+  },
+  headerBadge: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
   },
   headerCenter: {
     flex: 1,
@@ -1019,19 +947,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
   },
-  scannerStatus: {
-    backgroundColor: '#e8f5e8',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#4caf50',
+  scanHintBlock: {
+    backgroundColor: 'white',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  scannerStatusText: {
-    fontSize: 12,
-    color: '#2e7d32',
-    textAlign: 'center',
-    fontWeight: '500',
+  scanHintText: {
+    fontSize: 14,
+    color: '#444',
+    lineHeight: 20,
   },
   filterContainer: {
     flexDirection: 'row',

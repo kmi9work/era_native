@@ -2,7 +2,6 @@ package com.era.brotherprinter
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.util.Log
 import com.facebook.react.bridge.*
 import com.brother.sdk.lmprinter.*
 import com.brother.sdk.lmprinter.setting.QLPrintSettings
@@ -24,14 +23,7 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
     fun printBarcode(plantId: Int, printerIp: String, guildName: String, regionName: String, promise: Promise) {
         Thread {
             try {
-                Log.d("BrotherPrinterModule", "=== PRINT BARCODE DEBUG ===")
-                Log.d("BrotherPrinterModule", "Received plantId: $plantId")
-                Log.d("BrotherPrinterModule", "Received printerIp: $printerIp")
-                Log.d("BrotherPrinterModule", "Received guildName: $guildName")
-                Log.d("BrotherPrinterModule", "Received regionName: $regionName")
-                
                 val formattedId = String.format(Locale.US, "%09d", plantId)
-                Log.d("BrotherPrinterModule", "Formatted ID: $formattedId")
                 
                        // Создаем полный макет с информацией
                        val fullLayoutBitmap = createFullLayout(plantId, formattedId, guildName, regionName)
@@ -45,7 +37,6 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
                 val result: PrinterDriverGenerateResult = PrinterDriverGenerator.openChannel(channel)
 
                 if (result.error.code != OpenChannelError.ErrorCode.NoError) {
-                    Log.e("BrotherPrinterModule", "Error - Open Channel: " + result.error.code)
                     promise.reject("OPEN_CHANNEL_ERROR", "Failed to open printer channel: ${result.error.code}")
                     return@Thread
                 }
@@ -60,20 +51,14 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
                 // printSettings.labelSize = QLPrintSettings.LabelSize.DieCutW12H12  // 12x12mm
                 printSettings.workPath = reactApplicationContext.filesDir.absolutePath
                 
-                Log.d("BrotherPrinterModule", "Print settings - Label size: ${printSettings.labelSize}")
-                Log.d("BrotherPrinterModule", "Print settings - Work path: ${printSettings.workPath}")
-
                 val printError: PrintError = printerDriver.printImage(fullLayoutBitmap, printSettings)
                 if (printError.code != PrintError.ErrorCode.NoError) {
-                    Log.e("BrotherPrinterModule", "Error - Print Image: " + printError.code)
                     promise.reject("PRINT_ERROR", "Failed to print image: ${printError.code}")
                 } else {
-                    Log.d("BrotherPrinterModule", "Success - Print Image")
                     promise.resolve(true)
                 }
                 printerDriver.closeChannel()
             } catch (e: Exception) {
-                Log.e("BrotherPrinterModule", "Exception in printBarcode: ${e.message}", e)
                 promise.reject("UNEXPECTED_ERROR", e.message)
             }
         }.start()
@@ -91,7 +76,6 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
                 // TODO: Реализовать правильный поиск принтеров через Brother SDK
                 promise.resolve(printers)
             } catch (e: Exception) {
-                Log.e("BrotherPrinterModule", "Exception in searchPrinters: ${e.message}", e)
                 promise.reject("UNEXPECTED_ERROR", e.message)
             }
         }.start()
@@ -105,15 +89,12 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
                 val result: PrinterDriverGenerateResult = PrinterDriverGenerator.openChannel(channel)
 
                 if (result.error.code != OpenChannelError.ErrorCode.NoError) {
-                    Log.e("BrotherPrinterModule", "Error - Test Connection: " + result.error.code)
                     promise.resolve(false)
                 } else {
-                    Log.d("BrotherPrinterModule", "Success - Test Connection")
                     result.driver.closeChannel()
                     promise.resolve(true)
                 }
             } catch (e: Exception) {
-                Log.e("BrotherPrinterModule", "Exception in testConnection: ${e.message}", e)
                 promise.reject("UNEXPECTED_ERROR", e.message)
             }
         }.start()
@@ -124,7 +105,6 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
             // Создаем штрихкод
             val barcodeBitmap = generateBarcode(formattedId)
             if (barcodeBitmap == null) {
-                Log.e("BrotherPrinterModule", "Failed to generate barcode")
                 return null
             }
             
@@ -139,9 +119,6 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
             // Создаем полный макет
             val fullLayout = Bitmap.createBitmap(labelWidth, labelHeight, Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(fullLayout)
-            
-            Log.d("BrotherPrinterModule", "Layout dimensions: ${labelWidth}x${labelHeight}")
-            Log.d("BrotherPrinterModule", "Margins: X=${marginX}, Y=${marginY}")
             
             // Белый фон
             canvas.drawColor(Color.WHITE)
@@ -192,28 +169,16 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
             val placeHeight = calculateTextHeight(textPaint, placeText, availableWidth)
             val totalTextHeight = ownerHeight + placeHeight + 30f  // +30f для отступов между блоками
             
-            Log.d("BrotherPrinterModule", "Owner text height: $ownerHeight")
-            Log.d("BrotherPrinterModule", "Place text height: $placeHeight")
-            Log.d("BrotherPrinterModule", "Total text height: $totalTextHeight")
-            Log.d("BrotherPrinterModule", "Available height for barcode: ${labelHeight - totalTextHeight - marginY}")
-            
             // Рисуем текст с учетом отступов для предотвращения обрезания
             var yPosition = marginY + 50f  // Отступ сверху + высота первой строки
             val lineHeight = textPaint.textSize + 10f  // Высота строки с отступом
             
-            Log.d("BrotherPrinterModule", "Available width: $availableWidth")
-            Log.d("BrotherPrinterModule", "Line height: $lineHeight")
-            
             // Владелец - с переносом строк
             val ownerLines = breakTextIntoLines(textPaint, ownerText, availableWidth)
-            
-            Log.d("BrotherPrinterModule", "Owner text: '$ownerText'")
-            Log.d("BrotherPrinterModule", "Owner lines: ${ownerLines.size}")
             
             for (line in ownerLines) {
                 canvas.drawText(line, marginX, yPosition, textPaint)
                 yPosition += lineHeight
-                Log.d("BrotherPrinterModule", "Drew owner line: '$line' at Y: ${yPosition - lineHeight}")
             }
             
             yPosition += 15f  // Дополнительный отступ между блоками (владелец и место)
@@ -221,13 +186,9 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
             // Место - с переносом строк
             val placeLines = breakTextIntoLines(textPaint, placeText, availableWidth)
             
-            Log.d("BrotherPrinterModule", "Place text: '$placeText'")
-            Log.d("BrotherPrinterModule", "Place lines: ${placeLines.size}")
-            
             for (line in placeLines) {
                 canvas.drawText(line, marginX, yPosition, textPaint)
                 yPosition += lineHeight
-                Log.d("BrotherPrinterModule", "Drew place line: '$line' at Y: ${yPosition - lineHeight}")
             }
             
                    yPosition += 5f  // Дополнительный отступ перед штрихкодом
@@ -246,15 +207,11 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
                    val numberY = yPosition + barcodeHeight / 2  // Центрируем по вертикали относительно штрихкода
                    val numberX = barcodeX + barcodeWidth + numberSpacing  // Справа от штрихкода с отступом
                    
-                   Log.d("BrotherPrinterModule", "Drawing number: '$numberText' at X: $numberX, Y: $numberY")
-                   Log.d("BrotherPrinterModule", "Barcode position: X=$barcodeX, Y=$yPosition, Width=$barcodeWidth, Height=$barcodeHeight")
-                   
                    canvas.drawBitmap(scaledBarcode, barcodeX, yPosition, null)
                    canvas.drawText(numberText, numberX, numberY, textPaint)
             
             return fullLayout
         } catch (e: Exception) {
-            Log.e("BrotherPrinterModule", "Error creating full layout: ${e.message}", e)
             return null
         }
     }
@@ -343,7 +300,6 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
                 "fonts/$fontFileName"
             )
         } catch (e: Exception) {
-            Log.w("BrotherPrinterModule", "Failed to load custom font: $fontFileName", e)
             null
         }
     }
@@ -417,7 +373,6 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
             bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
             return bitmap
         } catch (e: Exception) {
-            Log.e("BrotherPrinterModule", "Error generating barcode: ${e.message}", e)
             return null
         }
     }

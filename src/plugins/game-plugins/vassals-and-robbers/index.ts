@@ -7,11 +7,8 @@ import { gameConfig } from '../../../config/game';
  */
 export const initVassalsAndRobbersPlugin = () => {
   if (!gameConfig.isActive('vassals-and-robbers')) {
-    console.log('[Vassals and Robbers] Plugin not active, skipping...');
     return;
   }
-
-  console.log('[Vassals and Robbers] Initializing plugin...');
 
   // TODO: Регистрация компонентов плагина
   // Пример:
@@ -20,7 +17,5 @@ export const initVassalsAndRobbersPlugin = () => {
 
   // TODO: Регистрация сервисов
   // import { vassalsApi } from './services/vassalsApi';
-
-  console.log('[Vassals and Robbers] Plugin initialized');
 };
 

@@ -16,8 +16,6 @@ class ComponentRegistry {
     component: ComponentType<T>,
     isDefault: boolean = false
   ): void {
-    console.log(`[Registry] Registering component: ${name}`);
-
     if (isDefault) {
       this.defaultComponents.set(name, component);
     }
@@ -31,7 +29,6 @@ class ComponentRegistry {
   get<T = any>(name: string): ComponentType<T> | null {
     const component = this.components.get(name);
     if (!component) {
-      console.warn(`Component "${name}" not found in registry`);
       return null;
     }
     return component as ComponentType<T>;

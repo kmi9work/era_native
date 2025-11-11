@@ -3,14 +3,6 @@ import { PrinterSettings } from './PrinterSettings';
 
 const { BrotherPrinterModule } = NativeModules;
 
-// Диагностика доступности нативного модуля
-console.log('=== BROTHER PRINTER DIAGNOSTICS ===');
-console.log('NativeModules keys:', Object.keys(NativeModules));
-console.log('BrotherPrinterModule:', BrotherPrinterModule);
-console.log('BrotherPrinterModule type:', typeof BrotherPrinterModule);
-console.log('BrotherPrinterModule available:', !!BrotherPrinterModule);
-console.log('===================================');
-
 export interface PrinterInfo {
   ip: string;
   model: string;
@@ -41,14 +33,6 @@ export class BrotherPrinterService {
       const printerIp = await PrinterSettings.getPrinterIp();
       const formattedId = plantId.toString().padStart(9, '0');
       
-      console.log('=== BROTHER PRINTER SERVICE DEBUG ===');
-      console.log('PlantId received:', plantId);
-      console.log('FormattedId:', formattedId);
-      console.log('GuildName:', guildName);
-      console.log('RegionName:', regionName);
-      console.log('PrinterIp:', printerIp);
-      console.log('Display options:', options);
-      
       if (!BrotherPrinterModule) {
         throw new Error('Нативный модуль Brother Printer недоступен. Убедитесь, что Development Build содержит Brother SDK.');
       }
@@ -57,12 +41,6 @@ export class BrotherPrinterService {
       return { success: result };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Неизвестная ошибка печати';
-      
-      // Не выводим в консоль ошибку OpenStreamFailure
-      if (!errorMessage.includes('OpenStreamFailure')) {
-        console.error('Ошибка печати штрихкода:', error);
-      }
-      
       return { 
         success: false, 
         error: errorMessage
@@ -87,7 +65,6 @@ export class BrotherPrinterService {
         name: p.name
       }));
     } catch (error) {
-      console.error('Ошибка поиска принтеров:', error);
       return [];
     }
   }
@@ -104,7 +81,6 @@ export class BrotherPrinterService {
 
       
       if (!BrotherPrinterModule) {
-        console.warn('Нативный модуль недоступен, используем HTTP fallback');
         // Простая HTTP проверка
         try {
           const response = await fetch(`http://${ip}`, { method: 'GET', timeout: 5000 });
@@ -115,9 +91,15 @@ export class BrotherPrinterService {
       }
       
       const result = await BrotherPrinterModule.testConnection(ip);
-      return { success: result };
+      if (result.success) {
+        return { success: result };
+      }
+      
+      return { 
+        success: false, 
+        error: result.error || 'Ошибка подключения к принтеру'
+      };
     } catch (error) {
-      console.error('Ошибка проверки подключения:', error);
       return { 
         success: false, 
         error: error instanceof Error ? error.message : 'Ошибка подключения к принтеру'
@@ -150,7 +132,7 @@ export class BrotherPrinterService {
   private static async simulatePrint(formattedId: string): Promise<void> {
     // Симуляция времени печати
     await new Promise(resolve => setTimeout(resolve, 2000));
-    console.log(`Штрихкод ${formattedId} успешно напечатан`);
+    return;
   }
 
   /**
@@ -159,6 +141,6 @@ export class BrotherPrinterService {
   private static async simulateConnectionTest(ip: string): Promise<void> {
     // Симуляция времени проверки
     await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log(`Подключение к ${ip} проверено`);
+    return;
   }
 }

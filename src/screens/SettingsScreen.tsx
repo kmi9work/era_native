@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { BrotherPrinterService } from '../services/BrotherPrinterService';
+import ScannerStatusBadge from '../components/ScannerStatusBadge';
 
 interface SettingsScreenProps {
   onClose: () => void;
@@ -31,7 +32,6 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorksho
       const ip = await BrotherPrinterService.getPrinterIp();
       setPrinterIp(ip || '192.168.1.147'); // Значение по умолчанию
     } catch (error) {
-      console.error('Ошибка загрузки настроек принтера:', error);
       setPrinterIp('192.168.1.147'); // Значение по умолчанию при ошибке
     }
   };
@@ -120,9 +120,12 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorksho
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Настройки</Text>
-        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-          <Text style={styles.closeButtonText}>✕</Text>
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <ScannerStatusBadge style={styles.headerBadge} />
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <Text style={styles.closeButtonText}>✕</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.content}>
@@ -247,14 +250,22 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
   },
-  closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  headerRight: {
+     flexDirection: 'row',
+     alignItems: 'center',
+   },
+   headerBadge: {
+     backgroundColor: 'rgba(255,255,255,0.25)',
+   },
+   closeButton: {
+     width: 36,
+     height: 36,
+     borderRadius: 18,
+     backgroundColor: 'rgba(255, 255, 255, 0.2)',
+     justifyContent: 'center',
+     alignItems: 'center',
+     marginLeft: 12,
+   },
   closeButtonText: {
     color: 'white',
     fontSize: 24,

@@ -9,10 +9,45 @@ const getBackendUrl = () => {
 
 const API_BASE_URL = getBackendUrl();
 
+// Простая функция для Base64 кодирования (совместима с React Native)
+const base64Encode = (str: string): string => {
+  // Используем встроенный способ если доступен
+  if (typeof btoa !== 'undefined') {
+    return btoa(str);
+  }
+  // Fallback для React Native - используем простую реализацию
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+  let output = '';
+  let i = 0;
+  while (i < str.length) {
+    const a = str.charCodeAt(i++);
+    const b = i < str.length ? str.charCodeAt(i++) : NaN;
+    const c = i < str.length ? str.charCodeAt(i++) : NaN;
+
+    const bitmap = (a << 16) | ((b || 0) << 8) | (c || 0);
+    
+    output += chars.charAt((bitmap >> 18) & 63);
+    output += chars.charAt((bitmap >> 12) & 63);
+    output += isNaN(b) ? '=' : chars.charAt((bitmap >> 6) & 63);
+    output += isNaN(c) ? '=' : chars.charAt(bitmap & 63);
+  }
+  return output;
+};
+
+// Создаем Basic Auth заголовок
+const getAuthHeader = () => {
+  if (CONFIG.BASIC_AUTH?.username && CONFIG.BASIC_AUTH?.password) {
+    const credentials = `${CONFIG.BASIC_AUTH.username}:${CONFIG.BASIC_AUTH.password}`;
+    const base64Credentials = base64Encode(credentials);
+    return `Basic ${base64Credentials}`;
+  }
+  return undefined;
+};
+
 class ApiService {
   private api = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 10000,
+    timeout: 30000, // Увеличено для медленного соединения
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -21,12 +56,31 @@ class ApiService {
   });
 
   constructor() {
+    // Добавляем Basic Auth заголовок ко всем запросам
+    const authHeader = getAuthHeader();
+    if (authHeader) {
+      this.api.defaults.headers.common['Authorization'] = authHeader;
+    }
+
+    // Интерцептор для обработки запросов - добавляем Basic Auth если нужно
+    this.api.interceptors.request.use(
+      (config) => {
+        const authHeader = getAuthHeader();
+        if (authHeader && config.headers) {
+          config.headers['Authorization'] = authHeader;
+        }
+        return config;
+      },
+      (error) => {
+        return Promise.reject(error);
+      }
+    );
+
     // Интерцептор для обработки ответов
     this.api.interceptors.response.use(
       (response) => response,
       (error) => {
-        console.error('API Error:', error.message);
-        return Promise.reject(error);
+        return error.response;
       }
     );
   }
@@ -81,7 +135,6 @@ class ApiService {
     try {
       await this.api.post('/auth/logout');
     } catch (error) {
-      console.error('Logout error:', error);
     }
   }
 
@@ -89,8 +142,7 @@ class ApiService {
     try {
       const response = await this.api.get('/auth/current_player');
       return response.data.player || response.data;
-    } catch (error) {
-      console.error('Get current player error:', error);
+    } catch (error: any) {
       return null;
     }
   }
@@ -101,7 +153,6 @@ class ApiService {
       const response = await this.api.get('/guilds.json');
       return response.data;
     } catch (error: any) {
-      console.error('Get guilds error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка получения списка гильдий');
     }
   }
@@ -112,7 +163,6 @@ class ApiService {
       const response = await this.api.get(`/guilds/${guildId}.json`);
       return response.data.plants || [];
     } catch (error: any) {
-      console.error('Get guild plants error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка получения предприятий гильдии');
     }
   }
@@ -123,7 +173,6 @@ class ApiService {
       const response = await this.api.get('/plant_places/available_places');
       return response.data;
     } catch (error: any) {
-      console.error('Get available places error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка получения доступных мест');
     }
   }
@@ -135,7 +184,6 @@ class ApiService {
       const levels = response.data.filter((level: any) => level.plant_type?.id === plantTypeId);
       return levels;
     } catch (error: any) {
-      console.error('Get plant levels error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка получения уровней предприятий');
     }
   }
@@ -146,7 +194,6 @@ class ApiService {
       const response = await this.api.get(`/plants/${plantId}.json`);
       return response.data;
     } catch (error: any) {
-      console.error('Get plant error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка получения информации о предприятии');
     }
   }
@@ -158,23 +205,9 @@ class ApiService {
     economic_subject: string; // формат: "{guild_id}_Guild"
   }): Promise<any> {
     try {
-      console.log('=== API SERVICE DEBUG ===');
-      console.log('Sending data:', data);
-      
-      const response = await this.api.post('/plants.json', { plant: data }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-      
-      console.log('Response status:', response.status);
-      console.log('Response headers:', response.headers);
-      console.log('Response data:', JSON.stringify(response.data, null, 2));
-      
+      const response = await this.api.post('/plants.json', data);
       return response.data;
     } catch (error: any) {
-      console.error('Create plant error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка создания предприятия');
     }
   }
@@ -185,10 +218,7 @@ class ApiService {
       const response = await this.api.patch(`/plants/${plantId}/upgrade`);
       return response.data;
     } catch (error: any) {
-      console.error('Upgrade plant error:', error);
-      console.error('Error response:', error.response?.data);
-      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Ошибка улучшения предприятия';
-      throw new Error(errorMessage);
+      throw new Error(error.response?.data?.message || 'Ошибка улучшения предприятия');
     }
   }
 
@@ -198,7 +228,6 @@ class ApiService {
       const response = await this.api.get('/resources/show_all_resources');
       return response.data;
     } catch (error: any) {
-      console.error('Get resources error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка получения ресурсов');
     }
   }
@@ -208,7 +237,6 @@ class ApiService {
     try {
       await this.api.delete(`/plants/${plantId}.json`);
     } catch (error: any) {
-      console.error('Delete plant error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка удаления предприятия');
     }
   }
@@ -219,7 +247,6 @@ class ApiService {
       const response = await this.api.get('/plant_levels/prod_info_full.json');
       return response.data;
     } catch (error: any) {
-      console.error('Get plant levels error:', error);
       throw new Error(error.response?.data?.message || 'Ошибка получения уровней предприятий');
     }
   }
@@ -235,11 +262,17 @@ class ApiService {
       });
       return response.data;
     } catch (error: any) {
-      console.error('Print barcode error:', error);
-      return {
-        success: false,
-        error: error.response?.data?.error || error.message || 'Ошибка печати штрихкода'
-      };
+      throw new Error(error.response?.data?.message || 'Ошибка печати штрихкода');
+    }
+  }
+
+  // Получить активные эффекты для текущего года
+  async getActiveLingeringEffects(): Promise<any[]> {
+    try {
+      const response = await this.api.get('/game_parameters/get_active_lingering_effects');
+      return response.data.effects || [];
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Ошибка получения эффектов гильдий');
     }
   }
 }
