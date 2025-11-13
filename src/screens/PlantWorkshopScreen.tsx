@@ -85,6 +85,14 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     };
   };
 
+  const getClosedTechnologyNames = useCallback(
+    (info?: AvailablePlaceInfo | null) =>
+      (info?.technology_requirements || [])
+        .filter(req => !req.open)
+        .map(req => `«${req.name}»`),
+    [],
+  );
+
   const handleSelectGuild = (guild: Guild) => {
     setSelectedGuild(guild);
     setStep('scenario');
@@ -590,26 +598,49 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
             <ActivityIndicator size="large" color="#1976d2" />
           ) : (
             <ScrollView style={styles.plantTypesList}>
-              {filteredPlants.map((plantType) => (
-                <TouchableOpacity
-                  key={plantType.plant_type_id}
-                  style={[
-                    styles.itemButton,
-                    plantType.available_places.length === 0 && styles.itemButtonDisabled
-                  ]}
-                  activeOpacity={0.7}
-                  onPress={() => handleSelectPlantType(plantType)}
-                  disabled={plantType.available_places.length === 0}
-                >
-                  <Text style={[
-                    styles.itemButtonText,
-                    plantType.available_places.length === 0 && styles.itemButtonTextDisabled
-                  ]}>
-                    {plantType.plant_type_name}
-                  </Text>
-                  <Text style={styles.itemButtonArrow}>›</Text>
-                </TouchableOpacity>
-              ))}
+              {filteredPlants.map((plantType) => {
+                const closedTechnologyNames = getClosedTechnologyNames(plantType);
+                const hasAnyPlaces = plantType.available_places.length > 0;
+                const hasAllowedPlaces = plantType.available_places.some((place) => place.allowed !== false);
+
+                return (
+                  <TouchableOpacity
+                    key={plantType.plant_type_id}
+                    style={[
+                      styles.itemButton,
+                      !hasAnyPlaces && styles.itemButtonDisabled
+                    ]}
+                    activeOpacity={0.7}
+                    onPress={() => handleSelectPlantType(plantType)}
+                    disabled={!hasAnyPlaces}
+                  >
+                    <View style={styles.itemButtonContent}>
+                      <Text style={[
+                        styles.itemButtonText,
+                        !hasAnyPlaces && styles.itemButtonTextDisabled
+                      ]}>
+                        {plantType.plant_type_name}
+                      </Text>
+                      {!hasAnyPlaces && (
+                        <Text style={styles.forbiddenNotice}>
+                          Нет свободных площадок — строительство временно недоступно
+                        </Text>
+                      )}
+                      {hasAnyPlaces && !hasAllowedPlaces && (
+                        <Text style={styles.forbiddenNotice}>
+                          Нет площадок в землях Руси — строительство запрещено правилами. Продолжайте только по решению ведущего.
+                        </Text>
+                      )}
+                      {closedTechnologyNames.length > 0 && (
+                        <Text style={styles.forbiddenNotice}>
+                          Технология {closedTechnologyNames.join(', ')} не открыта — строительство запрещено правилами
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={styles.itemButtonArrow}>›</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           )}
         </View>
@@ -618,9 +649,17 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
 
     // Если есть несколько доступных мест и место еще не выбрано
     if (selectedPlantType.available_places.length > 1 && !selectedPlace) {
+      const closedTechnologyNames = getClosedTechnologyNames(selectedPlantType);
+
       return (
         <View style={styles.content}>
           <Text style={styles.stepTitle}>{selectedPlantType.plant_type_name}</Text>
+
+          {closedTechnologyNames.length > 0 && (
+            <Text style={styles.forbiddenNotice}>
+              Технология {closedTechnologyNames.join(', ')} не открыта — строительство запрещено правилами. Продолжайте только по решению ведущего.
+            </Text>
+          )}
           
           {firstLevel && (
             <View style={styles.costBlock}>
@@ -649,7 +688,14 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
                 activeOpacity={0.7}
                 onPress={() => setSelectedPlace(place)}
               >
-                <Text style={styles.itemButtonText}>{place.region_name}</Text>
+                <View style={styles.itemButtonContent}>
+                  <Text style={styles.itemButtonText}>{place.region_name}</Text>
+                  {place.allowed === false && (
+                    <Text style={styles.forbiddenNotice}>
+                      Регион не принадлежит Руси — строительство запрещено правилами
+                    </Text>
+                  )}
+                </View>
                 <Text style={styles.itemButtonArrow}>›</Text>
               </TouchableOpacity>
             ))}
@@ -663,6 +709,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       (selectedPlantType.available_places.length === 1 
         ? selectedPlantType.available_places[0] 
         : null);
+    const closedTechnologyNames = getClosedTechnologyNames(selectedPlantType);
 
     return (
       <View style={styles.content}>
@@ -675,6 +722,18 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
           <Text style={styles.confirmLabel}>Место строительства:</Text>
           <Text style={styles.confirmValue}>{placeToShow?.region_name || 'Не выбрано'}</Text>
         </View>
+
+        {closedTechnologyNames.length > 0 && (
+          <Text style={styles.forbiddenNotice}>
+            Технология {closedTechnologyNames.join(', ')} не открыта — строительство запрещено правилами. Продолжайте только по решению ведущего.
+          </Text>
+        )}
+
+        {placeToShow && placeToShow.allowed === false && (
+          <Text style={styles.forbiddenNotice}>
+            Регион не принадлежит Руси — строительство запрещено правилами. Продолжайте только по решению ведущего.
+          </Text>
+        )}
 
         {firstLevel && (
           <View style={styles.costBlock}>
@@ -1034,6 +1093,12 @@ const styles = StyleSheet.create({
   itemButtonArrow: {
     fontSize: 24,
     color: '#999',
+  },
+  forbiddenNotice: {
+    marginTop: 6,
+    color: '#d32f2f',
+    fontSize: 13,
+    fontWeight: '600',
   },
   scenarioButton: {
     flexDirection: 'row',

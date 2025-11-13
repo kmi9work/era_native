@@ -275,6 +275,11 @@ class ApiService {
       throw new Error(error.response?.data?.message || 'Ошибка получения эффектов гильдий');
     }
   }
+
+  // Совместимость: получить эффекты гильдий через новый метод
+  async getActiveGuildEffects(): Promise<any[]> {
+    return this.getActiveLingeringEffects();
+  }
 }
 
 export default new ApiService();

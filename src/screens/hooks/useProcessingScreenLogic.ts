@@ -87,20 +87,142 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     }
   }, []);
 
+  const normalizeGuildReference = useCallback((guild: any) => {
+    if (!guild) {
+      return { id: null, name: null };
+    }
+
+    if (typeof guild === 'object') {
+      const rawId = guild.id ?? guild.guild_id ?? guild.economic_subject_id ?? guild.value_id ?? guild.target_id;
+      const id =
+        typeof rawId === 'number'
+          ? rawId
+          : typeof rawId === 'string' && /^\d+$/.test(rawId.trim())
+          ? parseInt(rawId, 10)
+          : null;
+      const rawName = guild.name ?? guild.label ?? guild.title ?? guild.value ?? guild.display;
+
+      return {
+        id,
+        name: typeof rawName === 'string' ? rawName : null,
+      };
+    }
+
+    if (typeof guild === 'number' && Number.isFinite(guild)) {
+      return { id: guild, name: null };
+    }
+
+    if (typeof guild === 'string') {
+      const trimmed = guild.trim();
+      if (/^\d+$/.test(trimmed)) {
+        return { id: parseInt(trimmed, 10), name: null };
+      }
+      return { id: null, name: trimmed };
+    }
+
+    return { id: null, name: String(guild) };
+  }, []);
+
+  const extractTargetId = useCallback((target: any): number | null => {
+    if (!target) return null;
+
+    if (typeof target === 'object') {
+      const rawId = target.id ?? target.guild_id ?? target.value_id ?? target.target_id ?? target.raw_id ?? target.value;
+      if (typeof rawId === 'number' && Number.isFinite(rawId)) {
+        return rawId;
+      }
+      if (typeof rawId === 'string' && /^\d+$/.test(rawId.trim())) {
+        return parseInt(rawId, 10);
+      }
+      return null;
+    }
+
+    if (typeof target === 'number' && Number.isFinite(target)) {
+      return target;
+    }
+
+    if (typeof target === 'string' && /^\d+$/.test(target.trim())) {
+      return parseInt(target, 10);
+    }
+
+    return null;
+  }, []);
+
+  const extractTargetName = useCallback((target: any): string | null => {
+    if (!target) return null;
+
+    if (typeof target === 'object') {
+      const rawName = target.name ?? target.label ?? target.value ?? target.display ?? target.raw;
+      if (typeof rawName === 'string' && rawName.trim().length > 0 && !/^\d+$/.test(rawName.trim())) {
+        return rawName;
+      }
+      return null;
+    }
+
+    if (typeof target === 'string' && target.trim().length > 0 && !/^\d+$/.test(target.trim())) {
+      return target;
+    }
+
+    return null;
+  }, []);
+
+  const isTargetMatchingGuild = useCallback(
+    (target: any, guildRef: { id: number | null; name: string | null }) => {
+      if (!guildRef.id && !guildRef.name) {
+        return false;
+      }
+
+      const targetId = extractTargetId(target);
+      if (targetId !== null && guildRef.id !== null && targetId === guildRef.id) {
+        return true;
+      }
+
+      const targetName = extractTargetName(target);
+      if (targetName && guildRef.name && targetName === guildRef.name) {
+        return true;
+      }
+
+      return false;
+    },
+    [extractTargetId, extractTargetName],
+  );
+
+  const hasEffectForGuild = useCallback(
+    (effectName: string, guild: any): boolean => {
+      if (!guild) {
+        return false;
+      }
+
+      const guildRef = normalizeGuildReference(guild);
+      if (!guildRef.id && !guildRef.name) {
+        return false;
+      }
+
+      return activeEffects.some((effect: any) => {
+        if (effect.effect !== effectName) {
+          return false;
+        }
+
+        const targets = Array.isArray(effect.targets)
+          ? effect.targets
+          : effect.targets !== undefined && effect.targets !== null
+          ? [effect.targets]
+          : [];
+
+        return targets.some((target: any) => isTargetMatchingGuild(target, guildRef));
+      });
+    },
+    [activeEffects, isTargetMatchingGuild, normalizeGuildReference],
+  );
+
   const hasHigherExtractionYield = useCallback(
-    (guildName: string): boolean =>
-      activeEffects.some(
-        (effect: any) => effect.effect === 'higher_extraction_yield' && effect.targets?.includes(guildName),
-      ),
-    [activeEffects],
+    (guild: any): boolean => hasEffectForGuild('higher_extraction_yield', guild),
+    [hasEffectForGuild],
   );
 
   const hasHigherProductionYield = useCallback(
-    (guildName: string): boolean =>
-      activeEffects.some(
-        (effect: any) => effect.effect === 'higher_production_yield' && effect.targets?.includes(guildName),
-      ),
-    [activeEffects],
+    (guild: any): boolean => hasEffectForGuild('higher_production_yield', guild),
+    [hasEffectForGuild],
   );
 
   const isTechSchoolsOpenForLevel = useCallback(
@@ -142,13 +264,6 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
         return 0;
       }
 
-      const isProcessing = entry.plant.plant_level?.plant_type?.plant_category?.id === 2;
-      const hasProductionEffect = isProcessing && entry.guild?.name && hasHigherProductionYield(entry.guild.name);
-      const innovationMultiplier = hasProductionEffect ? 1.2 : 1;
-      const techSchoolsOpenState = isProcessing && isTechSchoolsOpenForLevel(entry.plant.plant_level?.id);
-      const techSchoolsMultiplier = techSchoolsOpenState ? 1.5 : 1;
-      const effectMultiplier = innovationMultiplier * techSchoolsMultiplier;
-
       let maxCount = 0;
 
       formulas.forEach((formula: any) => {
@@ -168,9 +283,9 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
         }
       });
 
-      return Math.floor(maxCount * effectMultiplier);
+      return Math.floor(maxCount);
     },
-    [hasHigherProductionYield, isTechSchoolsOpenForLevel],
+    [],
   );
 
   const logMulti = useCallback(() => {
@@ -301,8 +416,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       let maxCount = 0;
 
       const isProcessing = selectedPlant?.plant_level?.plant_type?.plant_category?.id === 2;
-      const hasEffect = isProcessing && selectedGuild?.name && hasHigherProductionYield(selectedGuild.name);
-      const innovationMultiplier = hasEffect ? 1.2 : 1;
+      const hasEffect = isProcessing && selectedGuild && hasHigherProductionYield(selectedGuild);
+      const innovationMultiplier = hasEffect ? 2 : 1;
       const techSchoolsOpenState = isProcessing && isTechSchoolsOpen();
       const techSchoolsMultiplier = techSchoolsOpenState ? 1.5 : 1;
       const effectMultiplier = innovationMultiplier * techSchoolsMultiplier;
@@ -342,7 +457,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
       return Math.floor(maxCount);
     },
-    [hasHigherProductionYield, isTechSchoolsOpen, selectedGuild?.name, selectedPlant],
+    [hasHigherProductionYield, isTechSchoolsOpen, selectedGuild, selectedPlant],
   );
 
   const fetchPlantDetails = useCallback(
@@ -526,7 +641,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
         const details = await fetchPlantDetails(numericId);
 
         const extractionMultiplier =
-          details.isExtractive && details.guild?.name && hasHigherExtractionYield(details.guild.name) ? 1.2 : 1;
+          details.isExtractive && details.guild && hasHigherExtractionYield(details.guild) ? 2 : 1;
 
         const initialResultTo = details.isExtractive
           ? (details.formulaTo || []).map((resource: any) => ({
@@ -579,7 +694,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
       const isExtractive = selectedPlant.plant_level?.plant_type?.plant_category?.id === 1;
       const extractionMultiplier =
-        isExtractive && selectedGuild?.name && hasHigherExtractionYield(selectedGuild.name) ? 1.2 : 1;
+        isExtractive && selectedGuild && hasHigherExtractionYield(selectedGuild) ? 2 : 1;
 
       const initialResultTo = isExtractive
         ? (formulaTo || []).map((resource: any) => ({
@@ -673,8 +788,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
         // отладка отключена
 
         if (entry.isExtractive) {
-          const extractionMultiplier =
-            entry.guild?.name && hasHigherExtractionYield(entry.guild.name) ? 1.2 : 1;
+          const extractionMultiplier = entry.guild && hasHigherExtractionYield(entry.guild) ? 2 : 1;
           const resultTo = (entry.formulaTo || []).map((resource: any) => ({
             ...resource,
             count: Math.floor((resource.count || 0) * extractionMultiplier),
@@ -739,11 +853,10 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
           }
         });
 
-        const guildName = entry.guild?.name;
         const isProcessing = entry.plant?.plant_level?.plant_type?.plant_category?.id === 2;
-        const hasProductionEffect = isProcessing && guildName && hasHigherProductionYield(guildName);
+        const hasProductionEffect = isProcessing && entry.guild && hasHigherProductionYield(entry.guild);
         const techSchoolsOpenState = isTechSchoolsOpenForLevel(entry.plant?.plant_level?.id);
-        const effectBonus = (hasProductionEffect ? 1.2 : 1) * (techSchoolsOpenState ? 1.5 : 1);
+        const effectBonus = (hasProductionEffect ? 2 : 1) * (techSchoolsOpenState ? 1.5 : 1);
 
         resultingTo = resultingTo.map((res: any) => ({
           ...res,
@@ -952,8 +1065,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
     const coof = 1;
     const isProcessing = selectedPlant.plant_level?.plant_type?.plant_category?.id === 2;
-    const hasInnovationEffect = isProcessing && selectedGuild?.name && hasHigherProductionYield(selectedGuild.name);
-    const innovationBonus = hasInnovationEffect ? 1.2 : 1;
+    const hasInnovationEffect = isProcessing && selectedGuild && hasHigherProductionYield(selectedGuild);
+    const innovationBonus = hasInnovationEffect ? 2 : 1;
     const techSchoolsOpenState = isProcessing && isTechSchoolsOpen();
     const techSchoolsBonus = techSchoolsOpenState ? 1.5 : 1;
     const effectBonus = innovationBonus * techSchoolsBonus;
@@ -996,7 +1109,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     inputFrom,
     isTechSchoolsOpen,
     resArraySum,
-    selectedGuild?.name,
+    selectedGuild,
     selectedPlant?.plant_level,
   ]);
 
@@ -1019,8 +1132,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
     const coof = 1;
     const isProcessing = selectedPlant.plant_level?.plant_type?.plant_category?.id === 2;
-    const hasProductionEffect = isProcessing && selectedGuild?.name && hasHigherProductionYield(selectedGuild.name);
-    const innovationDivider = hasProductionEffect ? 1.2 : 1;
+    const hasProductionEffect = isProcessing && selectedGuild && hasHigherProductionYield(selectedGuild);
+    const innovationDivider = hasProductionEffect ? 2 : 1;
     const techSchoolsOpenState = isProcessing && isTechSchoolsOpen();
     const techSchoolsDivider = techSchoolsOpenState ? 1.5 : 1;
     const productionEffectDivider = innovationDivider * techSchoolsDivider;
@@ -1049,7 +1162,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     });
 
     const isExtractive = selectedPlant.plant_level?.plant_type?.plant_category?.id === 1;
-    const effectBonus = isExtractive && selectedGuild?.name && hasHigherExtractionYield(selectedGuild.name) ? 1.2 : 1;
+    const effectBonus = isExtractive && selectedGuild && hasHigherExtractionYield(selectedGuild) ? 2 : 1;
 
     resultingTo.forEach((res) => {
       res.count = Math.floor(res.count * coof * effectBonus);
@@ -1067,7 +1180,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     inputTo,
     isTechSchoolsOpen,
     resArraySum,
-    selectedGuild?.name,
+    selectedGuild,
     selectedPlant?.plant_level,
   ]);
 
@@ -1121,11 +1234,11 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
   const processingMeta = useMemo(() => {
     const isExtractive = selectedPlant?.plant_level?.plant_type?.plant_category?.id === 1;
-    const hasExtractionEffect = selectedGuild?.name && hasHigherExtractionYield(selectedGuild.name);
+    const hasExtractionEffect = selectedGuild && hasHigherExtractionYield(selectedGuild);
     const displayFormulaTo = isExtractive
       ? formulaTo.map((resource: any) => ({
           ...resource,
-          count: Math.floor(resource.count * (hasExtractionEffect ? 1.2 : 1)),
+          count: Math.floor(resource.count * (hasExtractionEffect ? 2 : 1)),
         }))
       : formulaTo;
 
@@ -1133,7 +1246,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       isExtractive,
       displayFormulaTo,
     };
-  }, [formulaTo, hasHigherExtractionYield, selectedGuild?.name, selectedPlant]);
+  }, [formulaTo, hasHigherExtractionYield, selectedGuild, selectedPlant]);
 
   const processingState = useMemo(
     () => ({

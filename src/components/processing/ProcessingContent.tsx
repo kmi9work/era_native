@@ -65,10 +65,10 @@ const ProcessingContent: React.FC<ProcessingContentProps> = ({
             <View style={styles.itemButtonContent}>
               <Text style={styles.itemButtonText}>{guild.name}</Text>
               {hasHigherExtractionYield(guild.name) && (
-                <Text style={styles.effectWarningText}>📈 Добыча увеличена на 20%</Text>
+                <Text style={styles.effectWarningText}>📈 Добыча увеличена на 100%</Text>
               )}
               {hasHigherProductionYield(guild.name) && (
-                <Text style={styles.effectWarningText}>⚙️ Производство увеличено на 20%</Text>
+                <Text style={styles.effectWarningText}>⚙️ Производство увеличено на 100%</Text>
               )}
             </View>
             <Text style={styles.itemButtonArrow}>›</Text>

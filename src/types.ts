@@ -23,6 +23,14 @@ export interface PlantPlace {
   name: string;
   region_id: number;
   region_name: string;
+  region_country_id?: number | null;
+  allowed?: boolean;
+}
+
+export interface TechnologyRequirement {
+  id: number;
+  name: string;
+  open: boolean;
 }
 
 export interface PlantLevel {
@@ -47,6 +55,7 @@ export interface AvailablePlaceInfo {
   plant_category: string;
   plant_category_id: number;
   available_places: PlantPlace[];
+  technology_requirements?: TechnologyRequirement[];
 }
 
 export interface Plant {
