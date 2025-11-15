@@ -23,23 +23,29 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
     fun printBarcode(plantId: Int, printerIp: String, guildName: String, regionName: String, promise: Promise) {
         Thread {
             try {
+                android.util.Log.d("BrotherPrinter", "Starting print job: plantId=$plantId, printerIp=$printerIp")
                 val formattedId = String.format(Locale.US, "%09d", plantId)
                 
                        // Создаем полный макет с информацией
                        val fullLayoutBitmap = createFullLayout(plantId, formattedId, guildName, regionName)
                 
                 if (fullLayoutBitmap == null) {
+                    android.util.Log.e("BrotherPrinter", "Failed to generate layout bitmap")
                     promise.reject("LAYOUT_GENERATION_FAILED", "Failed to generate full layout image.")
                     return@Thread
                 }
 
+                android.util.Log.d("BrotherPrinter", "Attempting to connect to printer at IP: $printerIp")
                 val channel: Channel = Channel.newWifiChannel(printerIp)
                 val result: PrinterDriverGenerateResult = PrinterDriverGenerator.openChannel(channel)
 
                 if (result.error.code != OpenChannelError.ErrorCode.NoError) {
+                    android.util.Log.e("BrotherPrinter", "Failed to open printer channel. Error code: ${result.error.code}")
                     promise.reject("OPEN_CHANNEL_ERROR", "Failed to open printer channel: ${result.error.code}")
                     return@Thread
                 }
+                
+                android.util.Log.d("BrotherPrinter", "Printer channel opened successfully")
 
                 val printerDriver = result.driver
                 val printSettings = QLPrintSettings(PrinterModel.QL_810W)
@@ -51,14 +57,18 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
                 // printSettings.labelSize = QLPrintSettings.LabelSize.DieCutW12H12  // 12x12mm
                 printSettings.workPath = reactApplicationContext.filesDir.absolutePath
                 
+                android.util.Log.d("BrotherPrinter", "Sending print job to printer")
                 val printError: PrintError = printerDriver.printImage(fullLayoutBitmap, printSettings)
                 if (printError.code != PrintError.ErrorCode.NoError) {
+                    android.util.Log.e("BrotherPrinter", "Print error: ${printError.code}")
                     promise.reject("PRINT_ERROR", "Failed to print image: ${printError.code}")
                 } else {
+                    android.util.Log.d("BrotherPrinter", "Print job completed successfully")
                     promise.resolve(true)
                 }
                 printerDriver.closeChannel()
             } catch (e: Exception) {
+                android.util.Log.e("BrotherPrinter", "Exception during print: ${e.message}", e)
                 promise.reject("UNEXPECTED_ERROR", e.message)
             }
         }.start()
@@ -85,16 +95,21 @@ class BrotherPrinterModule(reactContext: ReactApplicationContext) : ReactContext
     fun testConnection(printerIp: String, promise: Promise) {
         Thread {
             try {
+                android.util.Log.d("BrotherPrinter", "Testing connection to printer at IP: $printerIp")
                 val channel: Channel = Channel.newWifiChannel(printerIp)
+                android.util.Log.d("BrotherPrinter", "Channel created, attempting to open...")
                 val result: PrinterDriverGenerateResult = PrinterDriverGenerator.openChannel(channel)
 
                 if (result.error.code != OpenChannelError.ErrorCode.NoError) {
+                    android.util.Log.e("BrotherPrinter", "Connection test failed. Error code: ${result.error.code}")
                     promise.resolve(false)
                 } else {
+                    android.util.Log.d("BrotherPrinter", "Connection test successful")
                     result.driver.closeChannel()
                     promise.resolve(true)
                 }
             } catch (e: Exception) {
+                android.util.Log.e("BrotherPrinter", "Exception during connection test: ${e.message}", e)
                 promise.reject("UNEXPECTED_ERROR", e.message)
             }
         }.start()

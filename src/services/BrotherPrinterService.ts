@@ -37,10 +37,26 @@ export class BrotherPrinterService {
         throw new Error('Нативный модуль Brother Printer недоступен. Убедитесь, что Development Build содержит Brother SDK.');
       }
       
+      if (!printerIp) {
+        return { 
+          success: false, 
+          error: 'IP-адрес принтера не настроен. Укажите IP-адрес в настройках.'
+        };
+      }
+
       const result = await BrotherPrinterModule.printBarcode(plantId, printerIp, guildName, regionName);
       return { success: result };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Неизвестная ошибка печати';
+      let errorMessage = 'Неизвестная ошибка печати';
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        // Улучшаем сообщения об ошибках подключения
+        if (errorMessage.includes('OPEN_CHANNEL_ERROR') || errorMessage.includes('Failed to open printer channel')) {
+          errorMessage = 'Не удалось подключиться к принтеру. Проверьте:\n1. IP-адрес принтера\n2. Настройки роутера (AP Isolation должен быть отключен)\n3. Firewall правила на роутере\n4. Убедитесь, что принтер включен и подключен к той же WiFi сети';
+        }
+      }
+      
       return { 
         success: false, 
         error: errorMessage
@@ -86,23 +102,36 @@ export class BrotherPrinterService {
           const response = await fetch(`http://${ip}`, { method: 'GET', timeout: 5000 });
           return { success: response.ok };
         } catch (error) {
-          return { success: false, error: 'Принтер недоступен' };
+          return { success: false, error: 'Принтер недоступен. Проверьте IP-адрес и настройки роутера (AP Isolation должен быть отключен).' };
         }
       }
       
       const result = await BrotherPrinterModule.testConnection(ip);
-      if (result.success) {
-        return { success: result };
+      // Результат может быть boolean или объект
+      if (typeof result === 'boolean') {
+        if (result) {
+          return { success: true };
+        } else {
+          return { 
+            success: false, 
+            error: 'Не удалось подключиться к принтеру. Проверьте:\n1. IP-адрес принтера\n2. Настройки роутера (AP Isolation должен быть отключен)\n3. Firewall правила на роутере'
+          };
+        }
+      }
+      
+      if (result && result.success) {
+        return { success: true };
       }
       
       return { 
         success: false, 
-        error: result.error || 'Ошибка подключения к принтеру'
+        error: result?.error || 'Ошибка подключения к принтеру. Проверьте настройки роутера (AP Isolation должен быть отключен).'
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Ошибка подключения к принтеру';
       return { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Ошибка подключения к принтеру'
+        error: `${errorMessage}. Проверьте настройки роутера Mikrotik (AP Isolation должен быть отключен).`
       };
     }
   }
