@@ -16,9 +16,10 @@ interface SettingsScreenProps {
   onClose: () => void;
   onPlantWorkshop: () => void;
   onProcessing: () => void;
+  onMarket: () => void;
 }
 
-const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorkshop, onProcessing }) => {
+const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorkshop, onProcessing, onMarket }) => {
   const [printerIp, setPrinterIp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown');
@@ -155,6 +156,20 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorksho
               <Text style={styles.settingButtonText}>Переработка</Text>
               <Text style={styles.settingButtonDescription}>
                 Переработка ресурсов на предприятиях
+              </Text>
+            </View>
+            <Text style={styles.settingButtonArrow}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.settingButton}
+            onPress={onMarket}
+          >
+            <Text style={styles.settingButtonIcon}>💰</Text>
+            <View style={styles.settingButtonContent}>
+              <Text style={styles.settingButtonText}>Рынок</Text>
+              <Text style={styles.settingButtonDescription}>
+                Торговля с иностранными странами
               </Text>
             </View>
             <Text style={styles.settingButtonArrow}>›</Text>

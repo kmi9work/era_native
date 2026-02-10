@@ -27,7 +27,7 @@ initializePlugins();
 export default function App() {
   const [player, setPlayer] = useState<Player | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'settings' | 'plantWorkshop' | 'processing'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'dashboard' | 'settings' | 'plantWorkshop' | 'processing' | 'market'>('login');
 
   useEffect(() => {
     // Имитация загрузки
@@ -76,6 +76,14 @@ export default function App() {
     setCurrentScreen('settings');
   };
 
+  const handleOpenMarket = () => {
+    setCurrentScreen('market');
+  };
+
+  const handleCloseMarket = () => {
+    setCurrentScreen('settings');
+  };
+
   if (isLoading) {
     return (
       <View style={styles.container}>
@@ -86,49 +94,65 @@ export default function App() {
 
   const renderScreen = () => {
     // Получаем компоненты из registry (могут быть переопределены плагином)
-    const LoginScreenComponent = componentRegistry.get('LoginScreen') || LoginScreen;
-    const DashboardScreenComponent = componentRegistry.get('DashboardScreen') || DashboardScreen;
-    const SettingsScreenComponent = componentRegistry.get('SettingsScreen') || SettingsScreen;
-    const PlantWorkshopScreenComponent = componentRegistry.get('PlantWorkshopScreen') || PlantWorkshopScreen;
-    const ProcessingScreenComponent = componentRegistry.get('ProcessingScreen') || ProcessingScreen;
+    // Убеждаемся, что компоненты определены и являются функциями/классами компонентов
+    const LoginScreenComponent = componentRegistry.get('LoginScreen');
+    const DashboardScreenComponent = componentRegistry.get('DashboardScreen');
+    const SettingsScreenComponent = componentRegistry.get('SettingsScreen');
+    const PlantWorkshopScreenComponent = componentRegistry.get('PlantWorkshopScreen');
+    const ProcessingScreenComponent = componentRegistry.get('ProcessingScreen');
+
+    // Используем компоненты из registry или fallback на импортированные
+    const LoginComp = LoginScreenComponent && typeof LoginScreenComponent === 'function' ? LoginScreenComponent : LoginScreen;
+    const DashboardComp = DashboardScreenComponent && typeof DashboardScreenComponent === 'function' ? DashboardScreenComponent : DashboardScreen;
+    const SettingsComp = SettingsScreenComponent && typeof SettingsScreenComponent === 'function' ? SettingsScreenComponent : SettingsScreen;
+    const PlantWorkshopComp = PlantWorkshopScreenComponent && typeof PlantWorkshopScreenComponent === 'function' ? PlantWorkshopScreenComponent : PlantWorkshopScreen;
+    const ProcessingComp = ProcessingScreenComponent && typeof ProcessingScreenComponent === 'function' ? ProcessingScreenComponent : ProcessingScreen;
 
     switch (currentScreen) {
       case 'dashboard':
         return player ? (
-          <DashboardScreenComponent 
+          <DashboardComp 
             player={player} 
             onLogout={handleLogout} 
           />
         ) : (
-          <LoginScreenComponent 
+          <LoginComp 
             onLoginSuccess={handleLogin}
             onSettings={handleOpenSettings}
           />
         );
       case 'settings':
         return (
-          <SettingsScreenComponent 
+          <SettingsComp 
             onClose={handleCloseSettings}
             onPlantWorkshop={handleOpenPlantWorkshop}
             onProcessing={handleOpenProcessing}
+            onMarket={handleOpenMarket}
           />
         );
       case 'plantWorkshop':
         return (
-          <PlantWorkshopScreenComponent 
+          <PlantWorkshopComp 
             onClose={handleClosePlantWorkshop}
           />
         );
       case 'processing':
         return (
-          <ProcessingScreenComponent 
+          <ProcessingComp 
             onClose={handleCloseProcessing}
+          />
+        );
+      case 'market':
+        return (
+          <PlantWorkshopComp 
+            onClose={handleCloseMarket}
+            initialStep="market"
           />
         );
       case 'login':
       default:
         return (
-          <LoginScreenComponent 
+          <LoginComp 
             onLoginSuccess={handleLogin}
             onSettings={handleOpenSettings}
           />

@@ -7,22 +7,27 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  TextInput,
+  Image,
 } from 'react-native';
 import ApiService from '../services/api';
-import { Guild, AvailablePlaceInfo, PlantLevel, PlantPlace } from '../types';
+import { Guild, AvailablePlaceInfo, PlantLevel, PlantPlace, Country, Resource } from '../types';
 import ResourceItem from './ResourceItem';
 import { BrotherPrinterService } from '../services/BrotherPrinterService';
 import ScannerStatusBadge from '../components/ScannerStatusBadge';
 import { useBarcodeScannerContext } from '../context/BarcodeScannerContext';
+import CaravanService from '../services/CaravanService';
+import { CONFIG } from '../config';
 
 interface PlantWorkshopScreenProps {
   onClose: () => void;
+  initialStep?: 'guild' | 'scenario' | 'newPlant' | 'upgrade' | 'market';
 }
 
 type FilterType = 'all' | 'extractive' | 'processing';
 
-const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) => {
-  const [step, setStep] = useState<'guild' | 'scenario' | 'newPlant' | 'upgrade'>('guild');
+const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, initialStep = 'guild' }) => {
+  const [step, setStep] = useState<'guild' | 'scenario' | 'newPlant' | 'upgrade' | 'market'>(initialStep);
   const [guilds, setGuilds] = useState<Guild[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
   const [loading, setLoading] = useState(false);
@@ -46,6 +51,24 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   const [guildPlants, setGuildPlants] = useState<any[]>([]);
   const [selectedPlantForUpgrade, setSelectedPlantForUpgrade] = useState<any>(null);
 
+  // Для рынка
+  const [marketGuilds, setMarketGuilds] = useState<Guild[]>([]);
+  const [selectedMarketGuild, setSelectedMarketGuild] = useState<number | null>(null);
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [selectedCountry, setSelectedCountry] = useState<number | null>(null);
+  const [marketResources, setMarketResources] = useState<{ off_market: Resource[]; to_market: Resource[] }>({ off_market: [], to_market: [] });
+  const [resourcesPlSells, setResourcesPlSells] = useState<Array<{ identificator: string; count: number | null; name?: string }>>([]);
+  const [resourcesPlBuys, setResourcesPlBuys] = useState<Array<{ identificator: string; count: number | null; name?: string }>>([]);
+  const [showMarketForm, setShowMarketForm] = useState(false);
+  const [viaVyatka, setViaVyatka] = useState(false);
+  const [isCarProtected, setIsCarProtected] = useState(false);
+  const [guildRobberyProbabilities, setGuildRobberyProbabilities] = useState<Record<number, { probability: number; robbed?: boolean }>>({});
+  const [resToPlayer, setResToPlayer] = useState<Array<{ name: string; identificator: string; count: number }>>([]);
+  const [totalPurchaseCost, setTotalPurchaseCost] = useState(0);
+  const [totalSaleIncome, setTotalSaleIncome] = useState(0);
+  const [caravanPending, setCaravanPending] = useState(false);
+  const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+
   // Константы категорий (должны совпадать с бэкендом)
   const EXTRACTIVE = 1;
   const PROCESSING = 2;
@@ -53,7 +76,12 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
   useEffect(() => {
     loadGuilds();
     loadResources();
-  }, []);
+    if (initialStep === 'market') {
+      loadMarketData().catch(error => {
+        console.error('Ошибка загрузки данных рынка:', error);
+      });
+    }
+  }, [initialStep]);
 
   const loadGuilds = async () => {
     setLoading(true);
@@ -210,7 +238,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     };
   }, [addListener, handleBarcodeScanned, step]);
 
-  const handleSelectScenario = async (scenario: 'new' | 'upgrade') => {
+  const handleSelectScenario = async (scenario: 'new' | 'upgrade' | 'market') => {
     if (scenario === 'new') {
       setLoading(true);
       try {
@@ -222,7 +250,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       } finally {
         setLoading(false);
       }
-    } else {
+    } else if (scenario === 'upgrade') {
       // Загружаем предприятия гильдии
       if (selectedGuild) {
         setLoading(true);
@@ -236,8 +264,144 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         }
       }
       setStep('upgrade');
+    } else if (scenario === 'market') {
+      // Загружаем данные для рынка
+      setLoading(true);
+      try {
+        await loadMarketData();
+        setStep('market');
+      } catch (error: any) {
+        Alert.alert('Ошибка', error.message);
+      } finally {
+        setLoading(false);
+      }
     }
   };
+
+  // Загрузка данных для рынка
+  const loadMarketData = async () => {
+    try {
+      const [guildsData, countriesData, resourcesData] = await Promise.all([
+        ApiService.getGuildsList(),
+        ApiService.getForeignCountries(),
+        ApiService.getResourcesWithPrices()
+      ]);
+
+      setMarketGuilds(guildsData);
+      setCountries(countriesData);
+      CaravanService.setCountries(countriesData);
+
+      if (resourcesData.prices) {
+        setMarketResources(resourcesData.prices);
+        CaravanService.setResources(resourcesData.prices);
+      }
+
+      // Устанавливаем первую страну по умолчанию
+      if (countriesData.length > 0) {
+        setSelectedCountry(countriesData[0].id);
+      }
+
+      // Загружаем вероятности ограбления после установки гильдий
+      await loadRobberyProbabilitiesForGuilds(guildsData);
+
+      // Настраиваем polling для обновления цен
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+      const interval = setInterval(async () => {
+        try {
+          const [newCountries, newResources] = await Promise.all([
+            ApiService.getForeignCountries(),
+            ApiService.getResourcesWithPrices()
+          ]);
+          setCountries(newCountries);
+          CaravanService.setCountries(newCountries);
+          if (newResources.prices) {
+            setMarketResources(newResources.prices);
+            CaravanService.setResources(newResources.prices);
+          }
+        } catch (error) {
+          console.error('Ошибка обновления данных рынка:', error);
+        }
+      }, 30000); // 30 секунд
+      setPollInterval(interval);
+    } catch (error: any) {
+      throw new Error(error.message || 'Ошибка загрузки данных рынка');
+    }
+  };
+
+  // Загрузка вероятностей ограбления
+  const loadRobberyProbabilitiesForGuilds = async (guilds: Guild[]) => {
+    const probabilities: Record<number, { probability: number; robbed?: boolean }> = {};
+    for (const guild of guilds) {
+      try {
+        const result = await ApiService.checkRobbery(guild.id);
+        probabilities[guild.id] = {
+          probability: result.probability || 0,
+          robbed: result.robbed || false
+        };
+      } catch (error) {
+        console.error(`Ошибка загрузки вероятности ограбления для гильдии ${guild.id}:`, error);
+        probabilities[guild.id] = { probability: 0, robbed: false };
+      }
+    }
+    setGuildRobberyProbabilities(probabilities);
+  };
+
+  const loadRobberyProbabilities = async () => {
+    await loadRobberyProbabilitiesForGuilds(marketGuilds);
+  };
+
+  // Очистка polling при размонтировании
+  useEffect(() => {
+    return () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
+  }, [pollInterval]);
+
+  // Отслеживание изменений отношений и эмбарго
+  const prevCountriesRef = useRef<Country[]>([]);
+  useEffect(() => {
+    if (prevCountriesRef.current.length === 0) {
+      prevCountriesRef.current = countries;
+      return;
+    }
+
+    // Проверяем изменения отношений
+    countries.forEach((country, index) => {
+      const prevCountry = prevCountriesRef.current.find(c => c.id === country.id);
+      if (prevCountry && prevCountry.relations !== country.relations) {
+        Alert.alert('Изменение отношений!', `Отношения с ${country.name} изменились`);
+      }
+    });
+
+    // Проверяем изменения эмбарго
+    countries.forEach((country) => {
+      const prevCountry = prevCountriesRef.current.find(c => c.id === country.id);
+      if (prevCountry) {
+        const prevEmbargo = prevCountry.params?.embargo || 0;
+        const currentEmbargo = country.params?.embargo || 0;
+        if (prevEmbargo !== currentEmbargo) {
+          if (currentEmbargo > 0) {
+            Alert.alert('Эмбарго введено!', `${country.name} ввела эмбарго против Руси!`);
+          } else {
+            Alert.alert('Эмбарго снято!', `${country.name} сняла эмбарго!`);
+          }
+        }
+      }
+    });
+
+    prevCountriesRef.current = countries;
+  }, [countries]);
+
+  // Обновление массивов ресурсов при изменении страны
+  useEffect(() => {
+    if (selectedCountry && showMarketForm) {
+      updateResourcesArrays(selectedCountry);
+    }
+  }, [selectedCountry, marketResources, showMarketForm]);
 
   const handleSelectPlantType = async (plantTypeInfo: AvailablePlaceInfo) => {
     setSelectedPlantType(plantTypeInfo);
@@ -318,13 +482,33 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       const printResult = await BrotherPrinterService.printBarcode(plantData.id, guildName, regionName);
       
       if (printResult.success) {
-        Alert.alert('Успех', `Предприятие успешно построено!\nID: ${plantData.id}\nШтрихкод напечатан.`);
-        
-        // Сброс состояния
-        setSelectedPlantType(null);
-        setFirstLevel(null);
-        setSelectedPlace(null);
-        setStep('guild');
+        Alert.alert(
+          'Успех',
+          `Предприятие успешно построено!\nID: ${plantData.id}\nШтрихкод напечатан.`,
+          [
+            {
+              text: 'ОК',
+              onPress: () => {
+                // Сброс состояния
+                setSelectedPlantType(null);
+                setFirstLevel(null);
+                setSelectedPlace(null);
+                setStep('guild');
+              }
+            },
+            {
+              text: 'Напечатать заново',
+              onPress: () => {
+                handleReprintBarcode(plantData.id, guildName, regionName);
+                // Сброс состояния
+                setSelectedPlantType(null);
+                setFirstLevel(null);
+                setSelectedPlace(null);
+                setStep('guild');
+              }
+            }
+          ]
+        );
       } else {
         // Печать неудачна - предлагаем выбор
         // Не выводим ошибку в консоль для OpenStreamFailure
@@ -382,12 +566,38 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     try {
       const data = await ApiService.getPlant(parseInt(idToLoad));
       
+      console.log('Plant data received:', JSON.stringify(data, null, 2));
+      
       // В ответе plant_type находится внутри plant_level
-      const plantTypeId = data.plant_level?.plant_type?.id;
+      let plantTypeId = data.plant_level?.plant_type?.id;
       const currentLevel = data.plant_level?.level || 1;
       
+      // Если plant_type.id не найден, пытаемся найти из guildPlants
       if (!plantTypeId) {
-        Alert.alert('Ошибка', 'Не удалось определить тип предприятия');
+        const plantFromList = guildPlants.find(p => p.id === parseInt(idToLoad));
+        if (plantFromList?.plant_level?.plant_type?.id) {
+          plantTypeId = plantFromList.plant_level.plant_type.id;
+          console.log('Found plantTypeId from guildPlants:', plantTypeId);
+        }
+      }
+      
+      // Если все еще не найден, пытаемся использовать plant_level_id для получения типа
+      if (!plantTypeId && data.plant_level_id) {
+        // Пытаемся найти в уже загруженных данных
+        const plantFromList = guildPlants.find(p => p.plant_level_id === data.plant_level_id);
+        if (plantFromList?.plant_level?.plant_type?.id) {
+          plantTypeId = plantFromList.plant_level.plant_type.id;
+          console.log('Found plantTypeId from guildPlants by plant_level_id:', plantTypeId);
+        }
+      }
+      
+      if (!plantTypeId) {
+        console.error('Cannot find plantTypeId. Data structure:', {
+          plant_level: data.plant_level,
+          plant_level_id: data.plant_level_id,
+          guildPlants: guildPlants.map(p => ({ id: p.id, plant_level: p.plant_level }))
+        });
+        Alert.alert('Ошибка', 'Не удалось определить тип предприятия. Проверьте консоль для деталей.');
         return;
       }
       
@@ -404,16 +614,48 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         Alert.alert('Информация', 'Предприятие уже максимального уровня');
       }
     } catch (error: any) {
+      console.error('Error loading plant:', error);
       Alert.alert('Ошибка', error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSelectPlant = (plant: any) => {
+  const handleSelectPlant = async (plant: any) => {
     const formattedId = plant.id.toString();
     setPlantId(formattedId);
-    handleLoadPlant(formattedId);
+    
+    // Если у plant уже есть нужные данные, используем их
+    const plantTypeId = plant.plant_level?.plant_type?.id;
+    const currentLevel = plant.plant_level?.level || 1;
+    
+    if (plantTypeId) {
+      // Используем данные из plant напрямую
+      try {
+        setLoading(true);
+        const levels = await ApiService.getPlantLevels(plantTypeId);
+        const nextLevel = levels.find(l => l.level === currentLevel + 1);
+        
+        if (nextLevel) {
+          // Загружаем полные данные предприятия для отображения
+          const fullData = await ApiService.getPlant(plant.id);
+          setPlantInfo(fullData);
+          setUpgradeCost(nextLevel.price);
+          setSelectedPlantForUpgrade(fullData);
+        } else {
+          Alert.alert('Информация', 'Предприятие уже максимального уровня');
+        }
+      } catch (error: any) {
+        console.error('Error loading plant levels:', error);
+        // Fallback: используем handleLoadPlant
+        handleLoadPlant(formattedId);
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      // Если данных нет, загружаем через API
+      handleLoadPlant(formattedId);
+    }
   };
 
   const handleDeletePlant = async (plant: any) => {
@@ -473,6 +715,284 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReprintBarcode = async (plantId?: number, guildName?: string, regionName?: string) => {
+    // Если параметры не переданы, используем данные из selectedPlantForUpgrade
+    const plantIdToUse = plantId || selectedPlantForUpgrade?.id;
+    const guildNameToUse = guildName || selectedGuild?.name || 'Неизвестная гильдия';
+    
+    // Получаем название региона из plant_place или используем переданное
+    let regionNameToUse = regionName;
+    if (!regionNameToUse && selectedPlantForUpgrade?.plant_place) {
+      regionNameToUse = selectedPlantForUpgrade.plant_place.name || 
+                       selectedPlantForUpgrade.plant_place.region_name || 
+                       'Неизвестный регион';
+    }
+    if (!regionNameToUse) {
+      regionNameToUse = 'Неизвестный регион';
+    }
+
+    if (!plantIdToUse) {
+      Alert.alert('Ошибка', 'Не удалось определить ID предприятия');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const printResult = await BrotherPrinterService.printBarcode(plantIdToUse, guildNameToUse, regionNameToUse);
+      
+      if (printResult.success) {
+        Alert.alert('Успех', `Штрихкод успешно напечатан!\nID: ${plantIdToUse}`);
+      } else {
+        Alert.alert('Ошибка печати', printResult.error || 'Не удалось напечатать штрихкод');
+      }
+    } catch (error: any) {
+      Alert.alert('Ошибка', error.message || 'Ошибка при печати штрихкода');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Обработчики для рынка
+  const handleSelectGuildForMarket = async (guildId: number) => {
+    setSelectedMarketGuild(guildId);
+    setShowMarketForm(true);
+    
+    // Инициализируем массивы ресурсов для выбранной страны
+    if (selectedCountry) {
+      updateResourcesArrays(selectedCountry);
+    }
+  };
+
+  const handleBackToGuildSelection = () => {
+    setSelectedMarketGuild(null);
+    setShowMarketForm(false);
+    setViaVyatka(false);
+    setIsCarProtected(false);
+    handleResetMarketForm();
+    loadRobberyProbabilities();
+  };
+
+  const updateResourcesArrays = (countryId: number) => {
+    // Фильтруем ресурсы для продажи (to_market)
+    const filteredToMarket = marketResources.to_market.filter(
+      res => res.country_id === countryId || res.country?.id === countryId
+    );
+    const sellsArray = filteredToMarket.map(item => ({
+      identificator: item.identificator,
+      count: null,
+      name: item.name
+    }));
+    
+    // Добавляем золото в resourcesPlSells (как в era_front)
+    const goldItem = {
+      identificator: 'gold',
+      count: null,
+      name: 'Золото'
+    };
+    sellsArray.push(goldItem);
+    
+    setResourcesPlSells(sellsArray);
+
+    // Фильтруем ресурсы для покупки (off_market)
+    const filteredOffMarket = marketResources.off_market.filter(
+      res => res.country_id === countryId || res.country?.id === countryId
+    );
+    setResourcesPlBuys(
+      filteredOffMarket.map(item => ({
+        identificator: item.identificator,
+        count: null,
+        name: item.name
+      }))
+    );
+  };
+
+  const handleCalculateCaravan = () => {
+    if (!selectedCountry || !selectedMarketGuild) {
+      Alert.alert('Ошибка', 'Выберите страну и гильдию');
+      return;
+    }
+
+    try {
+      const result = CaravanService.calculateCaravan(
+        selectedCountry,
+        resourcesPlSells,
+        resourcesPlBuys
+      );
+
+      setResToPlayer(result.res_to_player);
+      setTotalPurchaseCost(result.total_purchase_cost);
+      setTotalSaleIncome(result.total_sale_income);
+
+      // Проверяем эмбарго
+      const country = countries.find(c => c.id === selectedCountry);
+      if (country?.params?.embargo && country.params.embargo > 0) {
+        Alert.alert(
+          'Эмбарго',
+          `${country.name} ввела эмбарго против Руси! Расчет выполнен, но караван не зарегистрирован.`,
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      // Проверяем недостаток золота
+      const goldPaid = resourcesPlSells.find(r => r.identificator === 'gold')?.count || 0;
+      const netCost = result.total_purchase_cost - result.total_sale_income;
+      const shortage = netCost > 0 ? netCost - Number(goldPaid) : 0;
+
+      if (shortage > 0) {
+        Alert.alert('Недостаточно золота', `Не хватает ${shortage} золота для покупки. Расчет выполнен, но караван не зарегистрирован.`);
+        return;
+      }
+
+      // Расчет выполнен успешно, результаты отображаются в UI
+      Alert.alert('Расчет выполнен', 'Проверьте результаты ниже. Нажмите "Зарегистрировать караван" для отправки.');
+    } catch (error: any) {
+      Alert.alert('Ошибка расчета', error.message);
+    }
+  };
+
+  const handleShowConfirmDialog = () => {
+    const goldPaid = resourcesPlSells.find(r => r.identificator === 'gold')?.count || 0;
+    const netCost = totalPurchaseCost - totalSaleIncome;
+    const shortage = netCost > 0 ? netCost - Number(goldPaid) : 0;
+
+    if (shortage > 0) {
+      Alert.alert('Недостаточно золота', `Не хватает ${shortage} золота для покупки`);
+      return;
+    }
+
+    Alert.alert(
+      'Подтверждение каравана',
+      `Вы уверены, что хотите зарегистрировать караван?`,
+      [
+        { text: 'Отмена', style: 'cancel' },
+        { text: 'Зарегистрировать', onPress: handleRegisterCaravan }
+      ]
+    );
+  };
+
+  const handleRegisterCaravan = async () => {
+    if (!selectedCountry || !selectedMarketGuild) {
+      Alert.alert('Ошибка', 'Выберите страну и гильдию');
+      return;
+    }
+
+    setLoading(true);
+    setCaravanPending(true);
+
+    try {
+      // Обогащаем incoming данными
+      const enrichedIncoming = resourcesPlSells
+        .filter(item => item.count && item.count > 0 && item.identificator !== 'gold')
+        .map(item => {
+          const resource = marketResources.to_market.find(
+            r => r.identificator === item.identificator &&
+                 (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+          );
+          return {
+            identificator: item.identificator || '',
+            name: item.name || resource?.name || '',
+            count: Number(item.count),
+            current_sell_price: resource?.sell_price
+          };
+        });
+
+      // Обогащаем outcoming данными
+      const enrichedOutcoming = resToPlayer
+        .filter(item => item.identificator !== 'gold')
+        .map(item => {
+          const resource = marketResources.off_market.find(
+            r => r.identificator === item.identificator &&
+                 (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+          );
+          return {
+            identificator: item.identificator,
+            name: item.name,
+            count: item.count,
+            current_buy_price: resource?.buy_price || 0
+          };
+        });
+
+      const goldPaid = resourcesPlSells.find(r => r.identificator === 'gold')?.count || 0;
+
+      const request = {
+        country_id: selectedCountry,
+        guild_id: selectedMarketGuild,
+        incoming: enrichedIncoming,
+        outcoming: enrichedOutcoming,
+        purchase_cost: totalPurchaseCost,
+        sale_income: totalSaleIncome,
+        via_vyatka: viaVyatka,
+        is_protected: isCarProtected
+      };
+
+      const response = await ApiService.registerCaravan(request);
+
+      if (response.robbed) {
+        Alert.alert('Караван ограблен', 'Караван был ограблен в пути');
+        handleBackToGuildSelection();
+      } else {
+        Alert.alert('Успех', 'Караван успешно зарегистрирован!');
+        handleBackToGuildSelection();
+      }
+    } catch (error: any) {
+      if (error.robbed) {
+        Alert.alert('Караван ограблен', error.error || 'Караван был ограблен в пути');
+        handleBackToGuildSelection();
+      } else {
+        Alert.alert('Ошибка', error.message || 'Ошибка регистрации каравана');
+      }
+    } finally {
+      setLoading(false);
+      setCaravanPending(false);
+    }
+  };
+
+  const handleResetMarketForm = () => {
+    setResourcesPlSells(prev => prev.map(item => ({ ...item, count: null })));
+    setResourcesPlBuys(prev => prev.map(item => ({ ...item, count: null })));
+    setResToPlayer([]);
+    setTotalPurchaseCost(0);
+    setTotalSaleIncome(0);
+  };
+
+  const getRobberyProbability = (guildId: number): string => {
+    const prob = guildRobberyProbabilities[guildId];
+    if (!prob || prob.probability === 0) return 'Защищена';
+    return `${(prob.probability * 100).toFixed(1)}%`;
+  };
+
+  const hasEmbargo = (country: Country): boolean => {
+    return (country.params?.embargo || 0) > 0;
+  };
+
+  const getResourceImageUrl = (identificator: string): string => {
+    if (!identificator) {
+      identificator = 'unknown';
+    }
+    return `${CONFIG.BACKEND_URL}/images/resources/${identificator}.png`;
+  };
+
+  const getCountryFlagUrl = (country: Country): string => {
+    // Используем flag_image_name если есть, иначе пытаемся использовать name
+    const flagName = country.flag_image_name || country.name;
+    if (!flagName) {
+      console.log('No flag name for country:', country);
+      return '';
+    }
+    // Убираем расширение .png если оно есть, так как мы добавляем его ниже
+    const cleanFlagName = flagName.replace(/\.png$/i, '').trim();
+    if (!cleanFlagName) {
+      console.log('Empty flag name after cleaning for country:', country);
+      return '';
+    }
+    // Кодируем имя файла для URL (на случай пробелов или специальных символов)
+    const encodedFlagName = encodeURIComponent(cleanFlagName);
+    const url = `${CONFIG.BACKEND_URL}/images/countries/${encodedFlagName}.png`;
+    console.log('Country flag URL:', country.name, flagName, '->', url);
+    return url;
   };
 
   const getFilteredPlantTypes = () => {
@@ -798,6 +1318,17 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
               {loading ? 'Улучшение...' : 'Улучшить'}
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.primaryButton, styles.secondaryButton, { marginTop: 10 }]}
+            activeOpacity={0.7}
+            onPress={() => handleReprintBarcode()}
+            disabled={loading}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {loading ? 'Печать...' : 'Напечатать штрихкод заново'}
+            </Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -844,6 +1375,287 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
     );
   };
 
+  const renderMarket = () => {
+    if (loading && !showMarketForm && marketGuilds.length === 0) {
+      return (
+        <View style={styles.content}>
+          <ActivityIndicator size="large" color="#1976d2" />
+        </View>
+      );
+    }
+
+    // Выбор гильдии
+    if (!showMarketForm) {
+      return (
+        <ScrollView style={styles.content}>
+          <Text style={styles.stepTitle}>Новый караван</Text>
+          <Text style={styles.stepSubtitle}>Выберите гильдию для каравана:</Text>
+
+          <View style={styles.marketCheckboxesContainer}>
+            <View style={styles.marketCheckboxRow}>
+              <TouchableOpacity
+                style={[styles.checkbox, viaVyatka && styles.checkboxChecked]}
+                onPress={() => setViaVyatka(!viaVyatka)}
+              >
+                {viaVyatka && <Text style={styles.checkboxText}>✓</Text>}
+              </TouchableOpacity>
+              <Text style={styles.checkboxLabel}>Караван идёт через Вятку</Text>
+            </View>
+            {viaVyatka && (
+              <Text style={styles.checkboxHint}>
+                Караван не может быть ограблен. Отправка каравана не изменяет товарооборот.
+              </Text>
+            )}
+
+            <View style={styles.marketCheckboxRow}>
+              <TouchableOpacity
+                style={[styles.checkbox, isCarProtected && styles.checkboxChecked]}
+                onPress={() => setIsCarProtected(!isCarProtected)}
+              >
+                {isCarProtected && <Text style={styles.checkboxText}>✓</Text>}
+              </TouchableOpacity>
+              <Text style={styles.checkboxLabel}>Караван идёт под охраной</Text>
+            </View>
+          </View>
+
+          <View style={styles.guildsListContainer}>
+            {marketGuilds.map((guild) => (
+              <View key={guild.id} style={styles.guildItemContainer}>
+                <TouchableOpacity
+                  style={styles.itemButton}
+                  activeOpacity={0.7}
+                  onPress={() => handleSelectGuildForMarket(guild.id)}
+                >
+                  <View style={styles.itemButtonContent}>
+                    <Text style={styles.itemButtonText}>{guild.name}</Text>
+                    <Text
+                      style={[
+                        styles.guildRiskText,
+                        guildRobberyProbabilities[guild.id]?.probability > 0
+                          ? styles.guildRiskTextWarning
+                          : styles.guildRiskTextSafe
+                      ]}
+                    >
+                      Риск: {getRobberyProbability(guild.id)}
+                    </Text>
+                  </View>
+                  <Text style={styles.itemButtonArrow}>›</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      );
+    }
+
+    // Форма рынка
+    return (
+      <ScrollView 
+        style={styles.content}
+        contentContainerStyle={styles.scrollViewContent}
+      >
+        {/* Выбор страны */}
+        <View style={styles.countryButtonsContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {countries.map((country) => (
+              <TouchableOpacity
+                key={country.id}
+                style={[
+                  styles.countryButton,
+                  selectedCountry === country.id && styles.countryButtonSelected,
+                  hasEmbargo(country) && styles.countryButtonEmbargo
+                ]}
+                onPress={() => {
+                  setSelectedCountry(country.id);
+                  updateResourcesArrays(country.id);
+                }}
+              >
+                <Image
+                  source={{ uri: getCountryFlagUrl(country) || `${CONFIG.BACKEND_URL}/images/countries/unknown.png` }}
+                  style={styles.countryFlag}
+                  resizeMode="contain"
+                  onError={(e) => {
+                    console.log('Error loading country flag:', {
+                      country: country.name,
+                      flag_image_name: country.flag_image_name,
+                      url: getCountryFlagUrl(country),
+                      error: e.nativeEvent?.error
+                    });
+                  }}
+                  onLoad={() => {
+                    console.log('Country flag loaded successfully:', {
+                      country: country.name,
+                      flag_image_name: country.flag_image_name,
+                      url: getCountryFlagUrl(country)
+                    });
+                  }}
+                />
+                <Text style={styles.countryButtonText}>
+                  {country.short_name || country.name}
+                </Text>
+                {hasEmbargo(country) && (
+                  <Text style={styles.embargoLabel}>Эмбарго</Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Форма "Игрок продает" */}
+        <View style={styles.marketFormSection}>
+          <Text style={styles.marketFormTitle}>
+            Игрок отправляет с караваном {viaVyatka ? '(через Вятку)' : ''}
+          </Text>
+          <View style={styles.resourcesInputContainer}>
+            {resourcesPlSells.map((item, index) => {
+              const resource = marketResources.to_market.find(
+                r => r.identificator === item.identificator &&
+                     (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+              );
+              return (
+                <View key={index} style={styles.resourceInputRow}>
+                  <Image
+                    source={{ uri: getResourceImageUrl(item.identificator) }}
+                    style={styles.resourceIcon}
+                  />
+                  <TextInput
+                    style={styles.resourceInput}
+                    value={item.count?.toString() || ''}
+                    onChangeText={(text) => {
+                      const newSells = [...resourcesPlSells];
+                      newSells[index].count = text ? Number(text) : null;
+                      setResourcesPlSells(newSells);
+                    }}
+                    placeholder={`${item.name || ''} ${resource?.sell_price ? `По ${resource.sell_price}` : 'Золото'}`}
+                    keyboardType="numeric"
+                  />
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Форма "Игрок заказал" */}
+        <View style={styles.marketFormSection}>
+          <Text style={styles.marketFormTitle}>
+            Игрок заказал {viaVyatka ? '(через Вятку)' : ''}
+          </Text>
+          <View style={styles.resourcesInputContainer}>
+            {resourcesPlBuys.map((item, index) => {
+              const resource = marketResources.off_market.find(
+                r => r.identificator === item.identificator &&
+                     (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+              );
+              return (
+                <View key={index} style={styles.resourceInputRow}>
+                  <Image
+                    source={{ uri: getResourceImageUrl(item.identificator) }}
+                    style={styles.resourceIcon}
+                  />
+                  <TextInput
+                    style={styles.resourceInput}
+                    value={item.count?.toString() || ''}
+                    onChangeText={(text) => {
+                      const newBuys = [...resourcesPlBuys];
+                      newBuys[index].count = text ? Number(text) : null;
+                      setResourcesPlBuys(newBuys);
+                    }}
+                    placeholder={`${item.name || ''} ${resource?.buy_price ? `По ${resource.buy_price}` : ''}`}
+                    keyboardType="numeric"
+                  />
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Кнопки действий */}
+        <View style={styles.marketActionsContainer}>
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={handleCalculateCaravan}
+            disabled={loading}
+          >
+            <Text style={styles.primaryButtonText}>
+              {loading ? 'Расчет...' : 'Посчитать'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.primaryButton, styles.secondaryButton]}
+            onPress={async () => {
+              try {
+                const resourcesData = await ApiService.getResourcesWithPrices();
+                if (resourcesData.prices) {
+                  setMarketResources(resourcesData.prices);
+                  CaravanService.setResources(resourcesData.prices);
+                  if (selectedCountry) {
+                    updateResourcesArrays(selectedCountry);
+                  }
+                }
+              } catch (error: any) {
+                Alert.alert('Ошибка', error.message);
+              }
+            }}
+          >
+            <Text style={styles.secondaryButtonText}>Обновить цены</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.primaryButton, { backgroundColor: '#dc3545' }]}
+            onPress={handleResetMarketForm}
+          >
+            <Text style={styles.primaryButtonText}>Очистить</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Результаты */}
+        {resToPlayer.length > 0 && (
+          <View style={styles.resultsCard}>
+            <Text style={styles.resultsCardTitle}>Выдать игроку</Text>
+            <View style={styles.resultsList}>
+              {resToPlayer.map((item, index) => (
+                <View key={index} style={styles.resultItem}>
+                  <Image
+                    source={{ uri: getResourceImageUrl(item.identificator) }}
+                    style={styles.resultItemIcon}
+                  />
+                  <View style={styles.resultItemContent}>
+                    <Text style={styles.resultItemName}>{item.name}</Text>
+                    <Text style={styles.resultItemCount}>
+                      Количество: {item.count}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+            {totalPurchaseCost > 0 && (
+              <Text style={styles.resultCost}>
+                Стоимость покупки: {totalPurchaseCost}
+              </Text>
+            )}
+            {totalSaleIncome > 0 && (
+              <Text style={styles.resultIncome}>
+                Выручка от продажи: {totalSaleIncome}
+              </Text>
+            )}
+            {totalPurchaseCost > 0 || totalSaleIncome > 0 ? (
+              <TouchableOpacity
+                style={[styles.primaryButton, { marginTop: 15 }]}
+                onPress={handleShowConfirmDialog}
+                disabled={loading || caravanPending}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {loading ? 'Регистрация...' : 'Зарегистрировать караван'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
+      </ScrollView>
+    );
+  };
+
   const handleBack = () => {
     if (step === 'guild') {
       onClose();
@@ -866,6 +1678,18 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
         setUpgradeCost(null);
       } else {
         setStep('scenario');
+      }
+    } else if (step === 'market') {
+      if (showMarketForm) {
+        // Вернуться к выбору гильдии
+        handleBackToGuildSelection();
+      } else {
+        // Если открыт из настроек напрямую - закрываем, иначе возвращаемся к scenario
+        if (initialStep === 'market') {
+          onClose();
+        } else {
+          setStep('scenario');
+        }
       }
     }
   };
@@ -891,6 +1715,21 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       );
     }
     
+    // Для рынка
+    if (step === 'market') {
+      return (
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.headerBackButton} activeOpacity={0.7} onPress={handleBack}>
+            <Text style={styles.headerBackButtonText}>Назад</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>Рынок</Text>
+          <View style={styles.headerRight}>
+            <ScannerStatusBadge style={styles.headerBadge} />
+          </View>
+        </View>
+      );
+    }
+
     // Для остальных экранов - показываем гильдию если выбрана
     if (selectedGuild && step !== 'guild') {
       return (
@@ -931,6 +1770,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose }) =>
       {step === 'scenario' && renderScenarioSelection()}
       {step === 'newPlant' && renderNewPlant()}
       {step === 'upgrade' && renderUpgrade()}
+      {step === 'market' && renderMarket()}
 
     </View>
   );
@@ -992,6 +1832,9 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 20,
+  },
+  scrollViewContent: {
+    paddingBottom: 120, // Отступ для системных кнопок Android
   },
   stepTitle: {
     fontSize: 20,
@@ -1288,6 +2131,208 @@ const styles = StyleSheet.create({
   },
   deleteButtonIcon: {
     fontSize: 24,
+  },
+  // Стили для рынка
+  marketCheckboxesContainer: {
+    marginBottom: 20,
+    padding: 15,
+    backgroundColor: 'white',
+    borderRadius: 8,
+  },
+  marketCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderWidth: 2,
+    borderColor: '#1976d2',
+    borderRadius: 4,
+    marginRight: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#1976d2',
+  },
+  checkboxText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    color: '#333',
+  },
+  checkboxHint: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 5,
+    marginLeft: 34,
+  },
+  guildsListContainer: {
+    marginTop: 10,
+  },
+  guildItemContainer: {
+    marginBottom: 12,
+  },
+  guildRiskContainer: {
+    marginTop: 4,
+  },
+  guildRiskText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  guildRiskTextSafe: {
+    color: '#4caf50',
+  },
+  guildRiskTextWarning: {
+    color: '#ff9800',
+  },
+  countryButtonsContainer: {
+    marginBottom: 20,
+  },
+  countryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    marginRight: 10,
+    borderRadius: 8,
+    backgroundColor: 'white',
+    borderWidth: 2,
+    borderColor: '#ddd',
+    minWidth: 100,
+  },
+  countryButtonSelected: {
+    borderColor: '#1976d2',
+    backgroundColor: '#e3f2fd',
+  },
+  countryButtonEmbargo: {
+    borderColor: '#f44336',
+  },
+  countryFlag: {
+    width: 32,
+    height: 24,
+    marginRight: 8,
+    borderRadius: 4,
+  },
+  countryButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  embargoLabel: {
+    fontSize: 10,
+    color: '#f44336',
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
+  marketFormSection: {
+    marginBottom: 20,
+    padding: 15,
+    backgroundColor: 'white',
+    borderRadius: 8,
+  },
+  marketFormTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    color: '#333',
+  },
+  resourcesInputContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  resourceInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '48%',
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 8,
+    backgroundColor: '#fafafa',
+  },
+  resourceIcon: {
+    width: 40,
+    height: 40,
+    marginRight: 8,
+  },
+  resourceInput: {
+    flex: 1,
+    height: 40,
+    paddingHorizontal: 8,
+    fontSize: 14,
+    color: '#333',
+  },
+  marketActionsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  resultsCard: {
+    padding: 15,
+    backgroundColor: '#e8f5e9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4caf50',
+  },
+  resultsCardTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    color: '#2e7d32',
+  },
+  resultsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 15,
+  },
+  resultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4caf50',
+    minWidth: 200,
+  },
+  resultItemIcon: {
+    width: 48,
+    height: 48,
+    marginRight: 8,
+  },
+  resultItemContent: {
+    flex: 1,
+  },
+  resultItemName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2e7d32',
+    marginBottom: 4,
+  },
+  resultItemCount: {
+    fontSize: 14,
+    color: '#1b5e20',
+  },
+  resultCost: {
+    fontSize: 14,
+    color: '#ff6f00',
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  resultIncome: {
+    fontSize: 14,
+    color: '#2e7d32',
+    fontWeight: '600',
+    marginTop: 4,
   },
 });
 

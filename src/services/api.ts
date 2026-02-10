@@ -280,6 +280,61 @@ class ApiService {
   async getActiveGuildEffects(): Promise<any[]> {
     return this.getActiveLingeringEffects();
   }
+
+  // Получить список гильдий для рынка
+  async getGuildsList(): Promise<any[]> {
+    try {
+      const response = await this.api.get('/guilds/list.json');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Ошибка получения списка гильдий');
+    }
+  }
+
+  // Получить список иностранных стран
+  async getForeignCountries(): Promise<any[]> {
+    try {
+      const response = await this.api.get('/countries/foreign_countries.json');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Ошибка получения списка стран');
+    }
+  }
+
+  // Получить ресурсы с ценами
+  async getResourcesWithPrices(): Promise<{ prices: { off_market: any[]; to_market: any[] } }> {
+    try {
+      const response = await this.api.get('/resources/show_prices.json');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Ошибка получения ресурсов с ценами');
+    }
+  }
+
+  // Проверить вероятность ограбления
+  async checkRobbery(guildId: number): Promise<{ probability: number; robbed?: boolean }> {
+    try {
+      const response = await this.api.get('/caravans/check_robbery.json', {
+        params: { guild_id: guildId }
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Ошибка проверки ограбления');
+    }
+  }
+
+  // Зарегистрировать караван
+  async registerCaravan(data: any): Promise<{ message?: string; caravan?: any; robbed?: boolean; error?: string }> {
+    try {
+      const response = await this.api.post('/caravans/register_caravan', data);
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.data?.robbed) {
+        return { robbed: true, error: error.response.data.error };
+      }
+      throw new Error(error.response?.data?.message || error.response?.data?.error || 'Ошибка регистрации каравана');
+    }
+  }
 }
 
 export default new ApiService();
