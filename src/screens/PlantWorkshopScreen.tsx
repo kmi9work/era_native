@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,13 +18,12 @@ import ScannerStatusBadge from '../components/ScannerStatusBadge';
 import { useBarcodeScannerContext } from '../context/BarcodeScannerContext';
 import CaravanService from '../services/CaravanService';
 import { CONFIG } from '../config';
+import { gameConfig } from '../config/game';
 
 interface PlantWorkshopScreenProps {
   onClose: () => void;
   initialStep?: 'guild' | 'scenario' | 'newPlant' | 'upgrade' | 'market';
 }
-
-type FilterType = 'all' | 'extractive' | 'processing';
 
 const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, initialStep = 'guild' }) => {
   const [step, setStep] = useState<'guild' | 'scenario' | 'newPlant' | 'upgrade' | 'market'>(initialStep);
@@ -38,15 +37,16 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
 
   // Для нового предприятия
   const [availablePlaces, setAvailablePlaces] = useState<AvailablePlaceInfo[]>([]);
-  const [filterType, setFilterType] = useState<FilterType>('all');
+  // null = "Все", иначе id категории с бэка (PlantCategory)
+  const [filterCategoryId, setFilterCategoryId] = useState<number | null>(null);
   const [selectedPlantType, setSelectedPlantType] = useState<AvailablePlaceInfo | null>(null);
-  const [plantLevels, setPlantLevels] = useState<PlantLevel[]>([]);
+  const [_plantLevels, setPlantLevels] = useState<PlantLevel[]>([]);
   const [firstLevel, setFirstLevel] = useState<PlantLevel | null>(null);
   const [selectedPlace, setSelectedPlace] = useState<PlantPlace | null>(null);
 
   // Для улучшения
   const [plantId, setPlantId] = useState('');
-  const [plantInfo, setPlantInfo] = useState<any>(null);
+  const [_plantInfo, setPlantInfo] = useState<any>(null);
   const [upgradeCost, setUpgradeCost] = useState<Record<string, number> | null>(null);
   const [guildPlants, setGuildPlants] = useState<any[]>([]);
   const [selectedPlantForUpgrade, setSelectedPlantForUpgrade] = useState<any>(null);
@@ -68,10 +68,30 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
   const [totalSaleIncome, setTotalSaleIncome] = useState(0);
   const [caravanPending, setCaravanPending] = useState(false);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const [newRelations, setNewRelations] = useState(false);
+  const [contrabandConfirmed, setContrabandConfirmed] = useState(false);
 
-  // Константы категорий (должны совпадать с бэкендом)
-  const EXTRACTIVE = 1;
-  const PROCESSING = 2;
+  // Рынок без страны (Artel): нет выбора страны, ресурсы с country_id == null
+  const isGameArtel = gameConfig.isActive('artel') || countries.length === 0;
+  const selectedCountryObj = useMemo(
+    () => (selectedCountry != null ? countries.find(c => c.id === selectedCountry) : undefined),
+    [countries, selectedCountry],
+  );
+  const isEmbargoActiveForSelected = useMemo(() => {
+    if (isGameArtel) return false;
+    return (selectedCountryObj?.params?.embargo || 0) > 0;
+  }, [isGameArtel, selectedCountryObj]);
+
+  // Список категорий из ответа бэка (PlantCategory) — уникальные по id
+  const plantCategoriesFromBackend = useMemo(() => {
+    const seen = new Map<number, string>();
+    availablePlaces.forEach(p => {
+      if (p.plant_category_id != null && p.plant_category != null && !seen.has(p.plant_category_id)) {
+        seen.set(p.plant_category_id, p.plant_category);
+      }
+    });
+    return Array.from(seen.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [availablePlaces]);
 
   useEffect(() => {
     loadGuilds();
@@ -81,7 +101,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         console.error('Ошибка загрузки данных рынка:', error);
       });
     }
-  }, [initialStep]);
+  }, [initialStep, loadMarketData]);
 
   const loadGuilds = async () => {
     setLoading(true);
@@ -278,60 +298,8 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     }
   };
 
-  // Загрузка данных для рынка
-  const loadMarketData = async () => {
-    try {
-      const [guildsData, countriesData, resourcesData] = await Promise.all([
-        ApiService.getGuildsList(),
-        ApiService.getForeignCountries(),
-        ApiService.getResourcesWithPrices()
-      ]);
-
-      setMarketGuilds(guildsData);
-      setCountries(countriesData);
-      CaravanService.setCountries(countriesData);
-
-      if (resourcesData.prices) {
-        setMarketResources(resourcesData.prices);
-        CaravanService.setResources(resourcesData.prices);
-      }
-
-      // Устанавливаем первую страну по умолчанию
-      if (countriesData.length > 0) {
-        setSelectedCountry(countriesData[0].id);
-      }
-
-      // Загружаем вероятности ограбления после установки гильдий
-      await loadRobberyProbabilitiesForGuilds(guildsData);
-
-      // Настраиваем polling для обновления цен
-      if (pollInterval) {
-        clearInterval(pollInterval);
-      }
-      const interval = setInterval(async () => {
-        try {
-          const [newCountries, newResources] = await Promise.all([
-            ApiService.getForeignCountries(),
-            ApiService.getResourcesWithPrices()
-          ]);
-          setCountries(newCountries);
-          CaravanService.setCountries(newCountries);
-          if (newResources.prices) {
-            setMarketResources(newResources.prices);
-            CaravanService.setResources(newResources.prices);
-          }
-        } catch (error) {
-          console.error('Ошибка обновления данных рынка:', error);
-        }
-      }, 30000); // 30 секунд
-      setPollInterval(interval);
-    } catch (error: any) {
-      throw new Error(error.message || 'Ошибка загрузки данных рынка');
-    }
-  };
-
   // Загрузка вероятностей ограбления
-  const loadRobberyProbabilitiesForGuilds = async (guilds: Guild[]) => {
+  const loadRobberyProbabilitiesForGuilds = useCallback(async (guilds: Guild[]) => {
     const probabilities: Record<number, { probability: number; robbed?: boolean }> = {};
     for (const guild of guilds) {
       try {
@@ -346,7 +314,72 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
       }
     }
     setGuildRobberyProbabilities(probabilities);
-  };
+  }, []);
+
+  // Загрузка данных для рынка
+  const loadMarketData = useCallback(async () => {
+    try {
+      const [guildsData, countriesData, resourcesData] = await Promise.all([
+        ApiService.getGuildsList(),
+        ApiService.getForeignCountries(),
+        ApiService.getResourcesWithPrices()
+      ]);
+
+      setMarketGuilds(guildsData);
+      setCountries(countriesData);
+      CaravanService.setCountries(countriesData);
+
+      if (resourcesData.prices) {
+        setMarketResources(resourcesData.prices);
+        CaravanService.setResources(resourcesData.prices);
+
+        // Диагностика: если в Artel-режиме бэкенд отдаёт "обычные" цены со странами,
+        // то на клиенте (где страны скрыты) ресурсы отфильтруются и получится пусто.
+        if (gameConfig.isActive('artel')) {
+          const toMarket = resourcesData.prices?.to_market ?? [];
+          const offMarket = resourcesData.prices?.off_market ?? [];
+          const hasCountrylessResources = [...toMarket, ...offMarket].some((res: any) => {
+            return res?.country_id == null && (res?.country == null || res?.country?.id == null);
+          });
+
+          if (!hasCountrylessResources && (toMarket.length > 0 || offMarket.length > 0)) {
+            Alert.alert(
+              'Artel: рынок не настроен',
+              'Бэкенд вернул цены со странами. Для Artel должны приходить ресурсы без страны (country=null). Перезапусти бэкенд в режиме Artel.'
+            );
+          }
+        }
+      }
+
+      // Устанавливаем первую страну по умолчанию (для Artel стран нет — selectedCountry остаётся null)
+      if (countriesData.length > 0) {
+        setSelectedCountry(countriesData[0].id);
+      }
+
+      // Загружаем вероятности ограбления после установки гильдий
+      await loadRobberyProbabilitiesForGuilds(guildsData);
+
+      // Настраиваем polling: как в era_front — опрашиваем страны (отношения/эмбарго),
+      // а цены обновляются вручную кнопкой "Обновить цены".
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+      const interval = setInterval(async () => {
+        try {
+          const newCountries = await ApiService.getForeignCountries();
+          setCountries(newCountries);
+          CaravanService.setCountries(newCountries);
+        } catch (error) {
+          console.error('Ошибка обновления данных рынка:', error);
+        }
+      }, 30000); // 30 секунд
+      setPollInterval(interval);
+      setNewRelations(false);
+      setContrabandConfirmed(false);
+    } catch (error: any) {
+      throw new Error(error.message || 'Ошибка загрузки данных рынка');
+    }
+  }, [loadRobberyProbabilitiesForGuilds, pollInterval]);
 
   const loadRobberyProbabilities = async () => {
     await loadRobberyProbabilitiesForGuilds(marketGuilds);
@@ -369,13 +402,19 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
       return;
     }
 
-    // Проверяем изменения отношений
-    countries.forEach((country, index) => {
+    // Проверяем изменения отношений (одним сообщением, как в era_front)
+    const relationChanged = countries.some((country) => {
       const prevCountry = prevCountriesRef.current.find(c => c.id === country.id);
-      if (prevCountry && prevCountry.relations !== country.relations) {
-        Alert.alert('Изменение отношений!', `Отношения с ${country.name} изменились`);
-      }
+      return prevCountry && prevCountry.relations !== country.relations;
     });
+    if (relationChanged) {
+      setNewRelations(true);
+      Alert.alert(
+        'Изменение отношений!',
+        'Отношения между странами изменились. Закройте рынок, обработайте все пришедшие караваны, обновите ценники, затем нажмите "Обновить цены".',
+        [{ text: 'Закрыть' }],
+      );
+    }
 
     // Проверяем изменения эмбарго
     countries.forEach((country) => {
@@ -396,12 +435,16 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     prevCountriesRef.current = countries;
   }, [countries]);
 
-  // Обновление массивов ресурсов при изменении страны
+  // Обновление массивов ресурсов при изменении страны (или при режиме «рынок без страны»)
   useEffect(() => {
-    if (selectedCountry && showMarketForm) {
-      updateResourcesArrays(selectedCountry);
+    if (showMarketForm) {
+      if (isGameArtel) {
+        updateResourcesArrays(null);
+      } else if (selectedCountry) {
+        updateResourcesArrays(selectedCountry);
+      }
     }
-  }, [selectedCountry, marketResources, showMarketForm]);
+  }, [selectedCountry, showMarketForm, isGameArtel, updateResourcesArrays]);
 
   const handleSelectPlantType = async (plantTypeInfo: AvailablePlaceInfo) => {
     setSelectedPlantType(plantTypeInfo);
@@ -462,18 +505,9 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
       // Проверяем, что мы получили корректный ответ
       if (!plantData || typeof plantData.id === 'undefined') {
         const errorMessage = 'Не удалось получить ID созданного предприятия';
-        const errorData = {
-          createdPlant,
-          plantData,
-          error: 'ID field is undefined or null'
-        };
-        
         throw new Error(errorMessage);
       }
 
-      // Форматируем ID в формат %09d (9 цифр с ведущими нулями)
-      const formattedPlantId = plantData.id.toString();
-      
       // Получаем информацию о гильдии и регионе
       const guildName = selectedGuild?.name || 'Неизвестная гильдия';
       const regionName = placeToUse?.name || 'Неизвестный регион';
@@ -758,9 +792,11 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
   const handleSelectGuildForMarket = async (guildId: number) => {
     setSelectedMarketGuild(guildId);
     setShowMarketForm(true);
-    
-    // Инициализируем массивы ресурсов для выбранной страны
-    if (selectedCountry) {
+    setContrabandConfirmed(false);
+
+    if (isGameArtel) {
+      updateResourcesArrays(null);
+    } else if (selectedCountry) {
       updateResourcesArrays(selectedCountry);
     }
   };
@@ -770,15 +806,20 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     setShowMarketForm(false);
     setViaVyatka(false);
     setIsCarProtected(false);
+    setContrabandConfirmed(false);
     handleResetMarketForm();
     loadRobberyProbabilities();
   };
 
-  const updateResourcesArrays = (countryId: number) => {
-    // Фильтруем ресурсы для продажи (to_market)
-    const filteredToMarket = marketResources.to_market.filter(
-      res => res.country_id === countryId || res.country?.id === countryId
-    );
+  const updateResourcesArrays = useCallback((countryId: number | null) => {
+    // При смене страны эмбарго/контрабанда подтверждается заново
+    setContrabandConfirmed(false);
+    const matchCountry = (res: Resource) =>
+      countryId == null
+        ? (res.country_id == null && res.country?.id == null)
+        : (res.country_id === countryId || res.country?.id === countryId);
+
+    const filteredToMarket = marketResources.to_market.filter(matchCountry);
     const sellsArray = filteredToMarket.map(item => ({
       identificator: item.identificator,
       count: null,
@@ -795,10 +836,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     
     setResourcesPlSells(sellsArray);
 
-    // Фильтруем ресурсы для покупки (off_market)
-    const filteredOffMarket = marketResources.off_market.filter(
-      res => res.country_id === countryId || res.country?.id === countryId
-    );
+    const filteredOffMarket = marketResources.off_market.filter(matchCountry);
     setResourcesPlBuys(
       filteredOffMarket.map(item => ({
         identificator: item.identificator,
@@ -806,17 +844,18 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         name: item.name
       }))
     );
-  };
+  }, [marketResources.to_market, marketResources.off_market]);
 
   const handleCalculateCaravan = () => {
-    if (!selectedCountry || !selectedMarketGuild) {
-      Alert.alert('Ошибка', 'Выберите страну и гильдию');
+    const effectiveCountryId = isGameArtel ? null : selectedCountry;
+    if ((effectiveCountryId == null && !isGameArtel) || !selectedMarketGuild) {
+      Alert.alert('Ошибка', isGameArtel ? 'Выберите гильдию' : 'Выберите страну и гильдию');
       return;
     }
 
     try {
       const result = CaravanService.calculateCaravan(
-        selectedCountry,
+        effectiveCountryId,
         resourcesPlSells,
         resourcesPlBuys
       );
@@ -825,15 +864,23 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
       setTotalPurchaseCost(result.total_purchase_cost);
       setTotalSaleIncome(result.total_sale_income);
 
-      // Проверяем эмбарго
-      const country = countries.find(c => c.id === selectedCountry);
-      if (country?.params?.embargo && country.params.embargo > 0) {
+      const country = effectiveCountryId != null ? countries.find(c => c.id === effectiveCountryId) : null;
+      const hasEmbargoNow = !!(country?.params?.embargo && country.params.embargo > 0);
+      if (hasEmbargoNow && !contrabandConfirmed) {
         Alert.alert(
-          'Эмбарго',
-          `${country.name} ввела эмбарго против Руси! Расчет выполнен, но караван не зарегистрирован.`,
-          [{ text: 'OK' }]
+          'Эта страна ввела эмбарго против Руси!',
+          'Для совершения операций с этой страной нужна Контрабанда. Есть карточка контрабанды?',
+          [
+            {
+              text: 'Есть карточка контрабанды!',
+              onPress: () => {
+                setContrabandConfirmed(true);
+                Alert.alert('ОК', 'Контрабанда подтверждена. Теперь можно зарегистрировать караван.');
+              },
+            },
+            { text: 'Закрыть', style: 'cancel' },
+          ],
         );
-        return;
       }
 
       // Проверяем недостаток золота
@@ -846,14 +893,19 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         return;
       }
 
-      // Расчет выполнен успешно, результаты отображаются в UI
-      Alert.alert('Расчет выполнен', 'Проверьте результаты ниже. Нажмите "Зарегистрировать караван" для отправки.');
     } catch (error: any) {
       Alert.alert('Ошибка расчета', error.message);
     }
   };
 
   const handleShowConfirmDialog = () => {
+    if (isEmbargoActiveForSelected && !contrabandConfirmed) {
+      Alert.alert(
+        'Эмбарго',
+        'Для регистрации каравана по этой стране требуется подтвердить контрабанду (кнопка "Есть карточка контрабанды!" при расчёте).',
+      );
+      return;
+    }
     const goldPaid = resourcesPlSells.find(r => r.identificator === 'gold')?.count || 0;
     const netCost = totalPurchaseCost - totalSaleIncome;
     const shortage = netCost > 0 ? netCost - Number(goldPaid) : 0;
@@ -862,20 +914,17 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
       Alert.alert('Недостаточно золота', `Не хватает ${shortage} золота для покупки`);
       return;
     }
-
-    Alert.alert(
-      'Подтверждение каравана',
-      `Вы уверены, что хотите зарегистрировать караван?`,
-      [
-        { text: 'Отмена', style: 'cancel' },
-        { text: 'Зарегистрировать', onPress: handleRegisterCaravan }
-      ]
-    );
+    handleRegisterCaravan();
   };
 
   const handleRegisterCaravan = async () => {
-    if (!selectedCountry || !selectedMarketGuild) {
-      Alert.alert('Ошибка', 'Выберите страну и гильдию');
+    const effectiveCountryId = isGameArtel ? null : selectedCountry;
+    if ((effectiveCountryId == null && !isGameArtel) || !selectedMarketGuild) {
+      Alert.alert('Ошибка', isGameArtel ? 'Выберите гильдию' : 'Выберите страну и гильдию');
+      return;
+    }
+    if (isEmbargoActiveForSelected && !contrabandConfirmed) {
+      Alert.alert('Эмбарго', 'Нельзя зарегистрировать караван без подтверждения контрабанды.');
       return;
     }
 
@@ -889,7 +938,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         .map(item => {
           const resource = marketResources.to_market.find(
             r => r.identificator === item.identificator &&
-                 (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+                 (isGameArtel ? (r.country_id == null && r.country?.id == null) : (r.country_id === effectiveCountryId || r.country?.id === effectiveCountryId))
           );
           return {
             identificator: item.identificator || '',
@@ -899,13 +948,12 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
           };
         });
 
-      // Обогащаем outcoming данными
       const enrichedOutcoming = resToPlayer
         .filter(item => item.identificator !== 'gold')
         .map(item => {
           const resource = marketResources.off_market.find(
             r => r.identificator === item.identificator &&
-                 (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+                 (isGameArtel ? (r.country_id == null && r.country?.id == null) : (r.country_id === effectiveCountryId || r.country?.id === effectiveCountryId))
           );
           return {
             identificator: item.identificator,
@@ -915,10 +963,8 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
           };
         });
 
-      const goldPaid = resourcesPlSells.find(r => r.identificator === 'gold')?.count || 0;
-
       const request = {
-        country_id: selectedCountry,
+        country_id: effectiveCountryId,
         guild_id: selectedMarketGuild,
         incoming: enrichedIncoming,
         outcoming: enrichedOutcoming,
@@ -956,6 +1002,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     setResToPlayer([]);
     setTotalPurchaseCost(0);
     setTotalSaleIncome(0);
+    setContrabandConfirmed(false);
   };
 
   const getRobberyProbability = (guildId: number): string => {
@@ -996,16 +1043,10 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
   };
 
   const getFilteredPlantTypes = () => {
-    let filtered;
-    if (filterType === 'all') {
-      filtered = availablePlaces;
-    } else if (filterType === 'extractive') {
-      filtered = availablePlaces.filter(p => p.plant_category_id === EXTRACTIVE);
-    } else {
-      filtered = availablePlaces.filter(p => p.plant_category_id === PROCESSING);
-    }
-    
-    // Сортируем: доступные предприятия в начале, недоступные в конце
+    const filtered = filterCategoryId == null
+      ? availablePlaces
+      : availablePlaces.filter(p => p.plant_category_id === filterCategoryId);
+
     return filtered.sort((a, b) => {
       const aAvailable = a.available_places.length > 0 ? 1 : 0;
       const bAvailable = b.available_places.length > 0 ? 1 : 0;
@@ -1070,6 +1111,17 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
           <Text style={styles.scenarioButtonText}>Улучшение предприятия</Text>
         </View>
       </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.scenarioButton}
+        activeOpacity={0.7}
+        onPress={() => handleSelectScenario('market')}
+      >
+        <Text style={styles.scenarioButtonIcon}>💰</Text>
+        <View style={styles.scenarioButtonContent}>
+          <Text style={styles.scenarioButtonText}>Рынок</Text>
+        </View>
+      </TouchableOpacity>
     </View>
   );
 
@@ -1081,37 +1133,29 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         <View style={styles.content}>
           <Text style={styles.stepTitle}>Выберите тип предприятия</Text>
           
-          {/* Фильтры */}
+          {/* Фильтры по категориям с бэка (PlantCategory) */}
           <View style={styles.filterContainer}>
             <TouchableOpacity
-              style={[styles.filterButton, filterType === 'all' && styles.filterButtonActive]}
+              style={[styles.filterButton, filterCategoryId === null && styles.filterButtonActive]}
               activeOpacity={0.7}
-              onPress={() => setFilterType('all')}
+              onPress={() => setFilterCategoryId(null)}
             >
-              <Text style={[styles.filterButtonText, filterType === 'all' && styles.filterButtonTextActive]}>
+              <Text style={[styles.filterButtonText, filterCategoryId === null && styles.filterButtonTextActive]}>
                 Все
               </Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.filterButton, filterType === 'extractive' && styles.filterButtonActive]}
-              activeOpacity={0.7}
-              onPress={() => setFilterType('extractive')}
-            >
-              <Text style={[styles.filterButtonText, filterType === 'extractive' && styles.filterButtonTextActive]}>
-                Добывающие
-              </Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.filterButton, filterType === 'processing' && styles.filterButtonActive]}
-              activeOpacity={0.7}
-              onPress={() => setFilterType('processing')}
-            >
-              <Text style={[styles.filterButtonText, filterType === 'processing' && styles.filterButtonTextActive]}>
-                Перерабатывающие
-              </Text>
-            </TouchableOpacity>
+            {plantCategoriesFromBackend.map((cat) => (
+              <TouchableOpacity
+                key={cat.id}
+                style={[styles.filterButton, filterCategoryId === cat.id && styles.filterButtonActive]}
+                activeOpacity={0.7}
+                onPress={() => setFilterCategoryId(cat.id)}
+              >
+                <Text style={[styles.filterButtonText, filterCategoryId === cat.id && styles.filterButtonTextActive]}>
+                  {cat.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
           {loading ? (
@@ -1391,32 +1435,34 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
           <Text style={styles.stepTitle}>Новый караван</Text>
           <Text style={styles.stepSubtitle}>Выберите гильдию для каравана:</Text>
 
-          <View style={styles.marketCheckboxesContainer}>
-            <View style={styles.marketCheckboxRow}>
-              <TouchableOpacity
-                style={[styles.checkbox, viaVyatka && styles.checkboxChecked]}
-                onPress={() => setViaVyatka(!viaVyatka)}
-              >
-                {viaVyatka && <Text style={styles.checkboxText}>✓</Text>}
-              </TouchableOpacity>
-              <Text style={styles.checkboxLabel}>Караван идёт через Вятку</Text>
-            </View>
-            {viaVyatka && (
-              <Text style={styles.checkboxHint}>
-                Караван не может быть ограблен. Отправка каравана не изменяет товарооборот.
-              </Text>
-            )}
+          {!isGameArtel && (
+            <View style={styles.marketCheckboxesContainer}>
+              <View style={styles.marketCheckboxRow}>
+                <TouchableOpacity
+                  style={[styles.checkbox, viaVyatka && styles.checkboxChecked]}
+                  onPress={() => setViaVyatka(!viaVyatka)}
+                >
+                  {viaVyatka && <Text style={styles.checkboxText}>✓</Text>}
+                </TouchableOpacity>
+                <Text style={styles.checkboxLabel}>Караван идёт через Вятку</Text>
+              </View>
+              {viaVyatka && (
+                <Text style={styles.checkboxHint}>
+                  Караван не может быть ограблен. Отправка каравана не изменяет товарооборот.
+                </Text>
+              )}
 
-            <View style={styles.marketCheckboxRow}>
-              <TouchableOpacity
-                style={[styles.checkbox, isCarProtected && styles.checkboxChecked]}
-                onPress={() => setIsCarProtected(!isCarProtected)}
-              >
-                {isCarProtected && <Text style={styles.checkboxText}>✓</Text>}
-              </TouchableOpacity>
-              <Text style={styles.checkboxLabel}>Караван идёт под охраной</Text>
+              <View style={styles.marketCheckboxRow}>
+                <TouchableOpacity
+                  style={[styles.checkbox, isCarProtected && styles.checkboxChecked]}
+                  onPress={() => setIsCarProtected(!isCarProtected)}
+                >
+                  {isCarProtected && <Text style={styles.checkboxText}>✓</Text>}
+                </TouchableOpacity>
+                <Text style={styles.checkboxLabel}>Караван идёт под охраной</Text>
+              </View>
             </View>
-          </View>
+          )}
 
           <View style={styles.guildsListContainer}>
             {marketGuilds.map((guild) => (
@@ -1428,16 +1474,18 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
                 >
                   <View style={styles.itemButtonContent}>
                     <Text style={styles.itemButtonText}>{guild.name}</Text>
-                    <Text
-                      style={[
-                        styles.guildRiskText,
-                        guildRobberyProbabilities[guild.id]?.probability > 0
-                          ? styles.guildRiskTextWarning
-                          : styles.guildRiskTextSafe
-                      ]}
-                    >
-                      Риск: {getRobberyProbability(guild.id)}
-                    </Text>
+                    {!isGameArtel && (
+                      <Text
+                        style={[
+                          styles.guildRiskText,
+                          guildRobberyProbabilities[guild.id]?.probability > 0
+                            ? styles.guildRiskTextWarning
+                            : styles.guildRiskTextSafe
+                        ]}
+                      >
+                        Риск: {getRobberyProbability(guild.id)}
+                      </Text>
+                    )}
                   </View>
                   <Text style={styles.itemButtonArrow}>›</Text>
                 </TouchableOpacity>
@@ -1454,7 +1502,8 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         style={styles.content}
         contentContainerStyle={styles.scrollViewContent}
       >
-        {/* Выбор страны */}
+        {/* Выбор страны (скрыт для Artel / рынок без страны) */}
+        {!isGameArtel && (
         <View style={styles.countryButtonsContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {countries.map((country) => (
@@ -1500,17 +1549,18 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
             ))}
           </ScrollView>
         </View>
+        )}
 
         {/* Форма "Игрок продает" */}
         <View style={styles.marketFormSection}>
           <Text style={styles.marketFormTitle}>
-            Игрок отправляет с караваном {viaVyatka ? '(через Вятку)' : ''}
+            {isGameArtel ? 'Игрок продаёт' : 'Игрок отправляет с караваном' + (viaVyatka ? ' (через Вятку)' : '')} 
           </Text>
           <View style={styles.resourcesInputContainer}>
             {resourcesPlSells.map((item, index) => {
               const resource = marketResources.to_market.find(
                 r => r.identificator === item.identificator &&
-                     (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+                     (isGameArtel ? (r.country_id == null && r.country?.id == null) : (r.country_id === selectedCountry || r.country?.id === selectedCountry))
               );
               return (
                 <View key={index} style={styles.resourceInputRow}>
@@ -1523,10 +1573,12 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
                     value={item.count?.toString() || ''}
                     onChangeText={(text) => {
                       const newSells = [...resourcesPlSells];
-                      newSells[index].count = text ? Number(text) : null;
+                      // Удаляем все символы, кроме цифр
+                      const cleanedText = text.replace(/[^0-9]/g, '');
+                      newSells[index].count = cleanedText ? Number(cleanedText) : null;
                       setResourcesPlSells(newSells);
                     }}
-                    placeholder={`${item.name || ''} ${resource?.sell_price ? `По ${resource.sell_price}` : 'Золото'}`}
+                    placeholder={`${item.name || ''} ${resource?.sell_price ? `по ${resource.sell_price}` : 'Золото'}`}
                     keyboardType="numeric"
                   />
                 </View>
@@ -1538,13 +1590,13 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         {/* Форма "Игрок заказал" */}
         <View style={styles.marketFormSection}>
           <Text style={styles.marketFormTitle}>
-            Игрок заказал {viaVyatka ? '(через Вятку)' : ''}
+            {isGameArtel ? 'Игрок покупает' : 'Игрок заказал' + (viaVyatka ? ' (через Вятку)' : '')} 
           </Text>
           <View style={styles.resourcesInputContainer}>
             {resourcesPlBuys.map((item, index) => {
               const resource = marketResources.off_market.find(
                 r => r.identificator === item.identificator &&
-                     (r.country_id === selectedCountry || r.country?.id === selectedCountry)
+                     (isGameArtel ? (r.country_id == null && r.country?.id == null) : (r.country_id === selectedCountry || r.country?.id === selectedCountry))
               );
               return (
                 <View key={index} style={styles.resourceInputRow}>
@@ -1557,10 +1609,12 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
                     value={item.count?.toString() || ''}
                     onChangeText={(text) => {
                       const newBuys = [...resourcesPlBuys];
-                      newBuys[index].count = text ? Number(text) : null;
+                      // Удаляем все символы, кроме цифр
+                      const cleanedText = text.replace(/[^0-9]/g, '');
+                      newBuys[index].count = cleanedText ? Number(cleanedText) : null;
                       setResourcesPlBuys(newBuys);
                     }}
-                    placeholder={`${item.name || ''} ${resource?.buy_price ? `По ${resource.buy_price}` : ''}`}
+                    placeholder={`${item.name || ''} ${resource?.buy_price ? `по ${resource.buy_price}` : ''}`}
                     keyboardType="numeric"
                   />
                 </View>
@@ -1589,16 +1643,22 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
                 if (resourcesData.prices) {
                   setMarketResources(resourcesData.prices);
                   CaravanService.setResources(resourcesData.prices);
-                  if (selectedCountry) {
+                  if (isGameArtel) {
+                    updateResourcesArrays(null);
+                  } else if (selectedCountry) {
                     updateResourcesArrays(selectedCountry);
                   }
+                  setNewRelations(false);
                 }
               } catch (error: any) {
                 Alert.alert('Ошибка', error.message);
               }
             }}
+            disabled={!newRelations}
           >
-            <Text style={styles.secondaryButtonText}>Обновить цены</Text>
+            <Text style={[styles.secondaryButtonText, !newRelations && { opacity: 0.6 }]}>
+              Обновить цены
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity

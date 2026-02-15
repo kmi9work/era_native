@@ -41,24 +41,22 @@ class CaravanService {
   }
 
   /**
-   * Фильтрует ресурсы по стране (оставляет только те, что принимает данная страна)
+   * Фильтрует ресурсы по стране (оставляет только те, что принимает данная страна).
+   * Для Artel (countryId == null) — ресурсы без страны (country_id null/undefined).
    */
-  countryFilter(countryId: number, resourcesList: Array<{ identificator: string; count?: number | null }>): Array<{ identificator: string; count?: number | null }> {
-    if (!countryId || !resourcesList || !Array.isArray(resourcesList)) {
+  countryFilter(countryId: number | null | undefined, resourcesList: Array<{ identificator: string; count?: number | null }>): Array<{ identificator: string; count?: number | null }> {
+    if (!resourcesList || !Array.isArray(resourcesList)) {
       return [];
     }
 
-    // Получаем все ресурсы, которые принимает эта страна (из обоих списков)
     const allResources = [...this.resources.off_market, ...this.resources.to_market];
-    const countryResources = allResources.filter(r =>
-      r.country_id === countryId || r.country?.id === countryId
-    );
+    const countryResources =
+      countryId == null
+        ? allResources.filter(r => r.country_id == null && r.country?.id == null)
+        : allResources.filter(r => r.country_id === countryId || r.country?.id === countryId);
     const countryIdentificators = countryResources.map(r => r.identificator);
 
-    // Фильтруем входящий список
-    return resourcesList.filter(res =>
-      countryIdentificators.includes(res.identificator)
-    );
+    return resourcesList.filter(res => countryIdentificators.includes(res.identificator));
   }
 
   /**
@@ -72,34 +70,34 @@ class CaravanService {
     amount: number,
     resource: Resource
   ): { identificator: string; count: number; cost: number | null; embargo: number } {
-    const countryId = resource.country_id || resource.country?.id;
+    if (!resource) {
+      return { identificator: '', count: amount, cost: null, embargo: 0 };
+    }
 
-    if (!resource || !countryId) {
-      return {
-        identificator: resource?.identificator || '',
-        count: amount,
-        cost: null,
-        embargo: 0
-      };
+    // Artel: ресурсы без страны — цены берём напрямую из ресурса
+    const countryId = resource.country_id ?? resource.country?.id;
+    if (countryId == null) {
+      const unitCost = transactionType === 'buy' ? resource.sell_price : resource.buy_price;
+      if (unitCost != null) {
+        return {
+          identificator: resource.identificator,
+          count: amount,
+          cost: unitCost * parseInt(String(amount), 10),
+          embargo: 0
+        };
+      }
+      return { identificator: resource.identificator, count: amount, cost: null, embargo: 0 };
     }
 
     const country = this.getCountryById(countryId);
     if (!country) {
-      return {
-        identificator: resource.identificator,
-        count: amount,
-        cost: null,
-        embargo: 0
-      };
+      return { identificator: resource.identificator, count: amount, cost: null, embargo: 0 };
     }
 
-    // Определяем, какое поле с ценой использовать
     let unitCost: number | undefined;
     if (transactionType === 'buy') {
-      // Игрок продает рынку - используем sell_price (из to_market)
       unitCost = resource.sell_price;
     } else {
-      // Игрок покупает с рынка - используем buy_price (из off_market)
       unitCost = resource.buy_price;
     }
 
@@ -121,17 +119,15 @@ class CaravanService {
   }
 
   /**
-   * Основная функция расчета караванов (аналог send_caravan на бэкенде)
+   * Основная функция расчета караванов (аналог send_caravan на бэкенде).
+   * Для Artel допустим countryId == null (рынок без страны).
    */
   calculateCaravan(
-    countryId: number,
+    countryId: number | null,
     resPlSells: Array<{ identificator: string; count?: number | null; name?: string }> = [],
     resPlBuys: Array<{ identificator: string; count?: number | null; name?: string }> = []
   ): CaravanResult {
-    // Валидация
-    if (!countryId) {
-      throw new Error('country_id is required');
-    }
+    // Валидация (countryId может быть null для Artel)
     if (!Array.isArray(resPlSells)) {
       throw new Error('res_pl_sells must be an array');
     }
@@ -147,17 +143,15 @@ class CaravanService {
     let purchaseCost = 0;  // Стоимость покупаемых товаров
     let saleIncome = 0;    // Выручка от продажи товаров
 
-    // Обрабатываем ресурсы, которые игрок продает рынку
     const eligibleSellResources = this.countryFilter(countryId, resPlSells);
 
     eligibleSellResources.forEach(res => {
-      if (res.identificator === 'gold') return; // Пропускаем золото
-      if (!res.count || res.count <= 0) return; // Пропускаем пустые значения
+      if (res.identificator === 'gold') return;
+      if (!res.count || res.count <= 0) return;
 
-      // Для продажи ищем в to_market (там есть sell_price)
       const resourceObj = this.resources.to_market.find(r =>
         r.identificator === res.identificator &&
-        (r.country_id === countryId || r.country?.id === countryId)
+        (countryId == null ? (r.country_id == null && r.country?.id == null) : (r.country_id === countryId || r.country?.id === countryId))
       );
       if (!resourceObj) return; // Пропускаем несуществующие ресурсы
 
@@ -168,17 +162,15 @@ class CaravanService {
       }
     });
 
-    // Обрабатываем ресурсы, которые игрок покупает с рынка
     const resToPlayer: Array<{ name: string; identificator: string; count: number }> = [];
     const eligibleBuyResources = this.countryFilter(countryId, resPlBuys);
 
     eligibleBuyResources.forEach(res => {
-      if (!res.count || res.count <= 0) return; // Пропускаем пустые значения
+      if (!res.count || res.count <= 0) return;
 
-      // Для покупки ищем в off_market (там есть buy_price)
       const resourceObj = this.resources.off_market.find(r =>
         r.identificator === res.identificator &&
-        (r.country_id === countryId || r.country?.id === countryId)
+        (countryId == null ? (r.country_id == null && r.country?.id == null) : (r.country_id === countryId || r.country?.id === countryId))
       );
       if (!resourceObj) return; // Пропускаем несуществующие ресурсы
 

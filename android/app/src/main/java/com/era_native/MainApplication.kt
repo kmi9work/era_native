@@ -22,6 +22,7 @@ class MainApplication : Application(), ReactApplication {
               // add(MyReactNativePackage())
               add(BarcodeScannerPackage())
               add(BrotherPrinterPackage())
+              add(GameConfigPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

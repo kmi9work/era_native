@@ -88,7 +88,7 @@ export interface Resource {
 }
 
 export interface CaravanRequest {
-  country_id: number;
+  country_id: number | null; // null для Artel (рынок без страны)
   guild_id: number;
   incoming: Array<{
     identificator: string;

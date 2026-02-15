@@ -1,3 +1,5 @@
+import { NativeModules } from 'react-native';
+
 interface GameInfo {
   name: string;
   description: string;
@@ -18,11 +20,22 @@ class GameConfig {
       name: 'Vassals and Robbers',
       description: 'Игра с вассалами и разбойниками',
     },
+    'artel': {
+      name: 'Artel',
+      description: 'Ресурсы без привязки к стране, один уровень отношений',
+    },
   };
 
   constructor() {
-    // В React Native используем process.env для переменных окружения
-    this.activeGame = process.env.ACTIVE_GAME || 'base-game';
+    // В React Native `process.env` обычно не заполняется.
+    // Поэтому берём build-time значение из нативного модуля, и только затем fallback.
+    const nativeActiveGame: unknown = NativeModules?.GameConfigModule?.ACTIVE_GAME;
+    this.activeGame =
+      (typeof nativeActiveGame === 'string' && nativeActiveGame.trim().length > 0
+        ? nativeActiveGame
+        : undefined) ||
+      // Последний fallback: env (на случай web/тестов) или base-game
+      (process.env.ACTIVE_GAME || 'base-game');
   }
 
   /**

@@ -60,6 +60,17 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
   const { addListener } = useBarcodeScannerContext();
   const lastHandledBarcodeRef = useRef<string | null>(null);
 
+  const getIsExtractive = useCallback((plant: any): boolean => {
+    const isExtractive = plant?.plant_level?.plant_type?.plant_category?.is_extractive || false;
+    console.log('getIsExtractive:', {
+      plantId: plant?.id,
+      plantName: plant?.plant_level?.plant_type?.name,
+      category: plant?.plant_level?.plant_type?.plant_category,
+      isExtractive
+    });
+    return isExtractive;
+  }, []);
+  
   const loadAllPlantLevels = useCallback(async () => {
     try {
       const data = await ApiService.getAllPlantLevels();
@@ -462,20 +473,35 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
   const fetchPlantDetails = useCallback(
     async (plantId: number) => {
+      console.log('=== fetchPlantDetails ===');
+      console.log('plantId:', plantId);
+      
       const data = await ApiService.getPlant(plantId);
-
+      console.log('Plant data:', JSON.stringify(data, null, 2));
+  
       if (!data.plant_level) {
         throw new Error('У предприятия нет уровня');
       }
-
+  
       const plantLevelId = data.plant_level.id;
+      console.log('plantLevelId:', plantLevelId);
+      console.log('allPlantLevels loaded:', allPlantLevels.length);
+      
       const fullPlantLevel = allPlantLevels.find((pl) => pl.id === plantLevelId);
-
+      console.log('fullPlantLevel found:', !!fullPlantLevel);
+      
+      if (fullPlantLevel) {
+        console.log('fullPlantLevel formulas:', fullPlantLevel.formulas?.length || 0);
+        console.log('fullPlantLevel formula_from:', fullPlantLevel.formula_from?.length || 0);
+        console.log('fullPlantLevel formula_to:', fullPlantLevel.formula_to?.length || 0);
+      }
+  
       if (!fullPlantLevel) {
         throw new Error('Информация об уровне предприятия не найдена');
       }
-
-      const isExtractive = data.plant_level.plant_type?.plant_category?.id === 1;
+  
+      const isExtractive = getIsExtractive(data);
+      console.log('data:', data);
 
       const guild = data.economic_subject_id
         ? guilds.find((g) => g.id === data.economic_subject_id) || null
@@ -554,7 +580,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
         fullPlantLevel,
       };
     },
-    [allPlantLevels, guilds],
+    [allPlantLevels, guilds, getIsExtractive],
   );
 
   const loadPlantAndNavigateToProcessing = useCallback(
@@ -692,7 +718,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
         ? allPlantLevels.find((pl) => pl.id === plantLevelId)
         : null;
 
-      const isExtractive = selectedPlant.plant_level?.plant_type?.plant_category?.id === 1;
+      const isExtractive = getIsExtractive(selectedPlant);
+      console.log('selectedPlant:', selectedPlant);
       const extractionMultiplier =
         isExtractive && selectedGuild && hasHigherExtractionYield(selectedGuild) ? 2 : 1;
 
@@ -738,6 +765,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     resetMultiTotals,
     selectedGuild,
     selectedPlant,
+    getIsExtractive,
   ]);
 
   const removeMultiEntry = useCallback(
@@ -968,7 +996,9 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
   const handleSelectPlant = useCallback(
     async (plant: any) => {
-      const isExtractive = plant.plant_level?.plant_type?.plant_category?.id === 1;
+      const isExtractive = getIsExtractive(plant);
+      console.log('plant:', plant);
+
       const plantLevelId = plant.plant_level?.id;
       const fullPlantLevel = allPlantLevels.find((pl) => pl.id === plantLevelId);
 
@@ -1043,7 +1073,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
       setStep('processing');
     },
-    [allPlantLevels, sortGuildPlants],
+    [allPlantLevels, sortGuildPlants, getIsExtractive],
   );
 
   const calculateFrom = useCallback(() => {
@@ -1161,7 +1191,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       resArraySum(resultingTo, to);
     });
 
-    const isExtractive = selectedPlant.plant_level?.plant_type?.plant_category?.id === 1;
+    const isExtractive = getIsExtractive(selectedPlant);
+    console.log('selectedPlant:', selectedPlant);
     const effectBonus = isExtractive && selectedGuild && hasHigherExtractionYield(selectedGuild) ? 2 : 1;
 
     resultingTo.forEach((res) => {
@@ -1182,6 +1213,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     resArraySum,
     selectedGuild,
     selectedPlant?.plant_level,
+    getIsExtractive,
   ]);
 
   const setInputFromValue = useCallback((identificator: string, value: string) => {
@@ -1233,7 +1265,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
   }, [loadActiveEffects, loadAllPlantLevels, loadResources]);
 
   const processingMeta = useMemo(() => {
-    const isExtractive = selectedPlant?.plant_level?.plant_type?.plant_category?.id === 1;
+    const isExtractive = getIsExtractive(selectedPlant);
+    console.log('selectedPlant:', selectedPlant);
     const hasExtractionEffect = selectedGuild && hasHigherExtractionYield(selectedGuild);
     const displayFormulaTo = isExtractive
       ? formulaTo.map((resource: any) => ({
@@ -1246,7 +1279,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       isExtractive,
       displayFormulaTo,
     };
-  }, [formulaTo, hasHigherExtractionYield, selectedGuild, selectedPlant]);
+  }, [formulaTo, hasHigherExtractionYield, selectedGuild, selectedPlant, getIsExtractive]);
 
   const processingState = useMemo(
     () => ({
