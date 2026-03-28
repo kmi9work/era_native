@@ -1,4 +1,5 @@
 import { NativeModules } from 'react-native';
+import { CONFIG } from '../config';
 
 interface GameInfo {
   name: string;
@@ -27,10 +28,17 @@ class GameConfig {
   };
 
   constructor() {
+    const configActiveGame: unknown = (CONFIG as { ACTIVE_GAME?: unknown })?.ACTIVE_GAME;
     // В React Native `process.env` обычно не заполняется.
-    // Поэтому берём build-time значение из нативного модуля, и только затем fallback.
+    // Приоритет:
+    // 1) Явно сгенерированный ACTIVE_GAME в src/config.ts (скрипты сборки/запуска)
+    // 2) build-time значение из нативного модуля
+    // 3) process.env / base-game
     const nativeActiveGame: unknown = NativeModules?.GameConfigModule?.ACTIVE_GAME;
     this.activeGame =
+      (typeof configActiveGame === 'string' && configActiveGame.trim().length > 0
+        ? configActiveGame
+        : undefined) ||
       (typeof nativeActiveGame === 'string' && nativeActiveGame.trim().length > 0
         ? nativeActiveGame
         : undefined) ||

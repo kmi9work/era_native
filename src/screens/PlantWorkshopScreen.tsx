@@ -124,9 +124,14 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     } catch (error: any) {}
   };
 
+  const getImagesBaseUrl = (): string => {
+    const base = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '');
+    return base.replace(/\/backend$/i, '');
+  };
+
   const getResourceInfo = (identificator: string) => {
     const resource = resources.find(r => r.identificator === identificator);
-    const baseURL = ApiService['api'].defaults.baseURL || 'http://192.168.1.101:3000';
+    const baseURL = getImagesBaseUrl() || ApiService['api'].defaults.baseURL || 'http://192.168.1.101:3000';
     return {
       name: resource?.name || identificator,
       imageUrl: `${baseURL}/images/resources/${identificator}.png`
@@ -473,7 +478,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
         ? selectedPlantType.available_places[0] 
         : null);
 
-    if (!selectedGuild || !firstLevel || !placeToUse) {
+    if (!selectedGuild || !firstLevel || (!placeToUse && !isGameArtel)) {
       Alert.alert('Ошибка', 'Не все данные заполнены');
       return;
     }
@@ -485,7 +490,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
       // Создаем предприятие
       createdPlant = await ApiService.createPlant({
         plant_level_id: firstLevel.id,
-        plant_place_id: placeToUse.id,
+        plant_place_id: placeToUse?.id ?? null,
         economic_subject: `${selectedGuild.id}_Guild`,
       });
 
@@ -1019,7 +1024,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     if (!identificator) {
       identificator = 'unknown';
     }
-    return `${CONFIG.BACKEND_URL}/images/resources/${identificator}.png`;
+    return `${getImagesBaseUrl()}/images/resources/${identificator}.png`;
   };
 
   const getCountryFlagUrl = (country: Country): string => {
@@ -1037,7 +1042,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
     }
     // Кодируем имя файла для URL (на случай пробелов или специальных символов)
     const encodedFlagName = encodeURIComponent(cleanFlagName);
-    const url = `${CONFIG.BACKEND_URL}/images/countries/${encodedFlagName}.png`;
+    const url = `${getImagesBaseUrl()}/images/countries/${encodedFlagName}.png`;
     console.log('Country flag URL:', country.name, flagName, '->', url);
     return url;
   };
@@ -1164,7 +1169,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
             <ScrollView style={styles.plantTypesList}>
               {filteredPlants.map((plantType) => {
                 const closedTechnologyNames = getClosedTechnologyNames(plantType);
-                const hasAnyPlaces = plantType.available_places.length > 0;
+                const hasAnyPlaces = isGameArtel || plantType.available_places.length > 0;
                 const hasAllowedPlaces = plantType.available_places.some((place) => place.allowed !== false);
 
                 return (
@@ -1520,7 +1525,7 @@ const PlantWorkshopScreen: React.FC<PlantWorkshopScreenProps> = ({ onClose, init
                 }}
               >
                 <Image
-                  source={{ uri: getCountryFlagUrl(country) || `${CONFIG.BACKEND_URL}/images/countries/unknown.png` }}
+                    source={{ uri: getCountryFlagUrl(country) || `${getImagesBaseUrl()}/images/countries/unknown.png` }}
                   style={styles.countryFlag}
                   resizeMode="contain"
                   onError={(e) => {

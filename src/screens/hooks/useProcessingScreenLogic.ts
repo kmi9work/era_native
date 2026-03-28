@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
 import ApiService from '../../services/api';
 import { useBarcodeScannerContext } from '../../context/BarcodeScannerContext';
+import { CONFIG } from '../../config';
 
 type Step = 'guild' | 'plant' | 'processing' | 'multi';
 
@@ -255,7 +256,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
   const getResourceInfo = useCallback(
     (identificator: string) => {
       const resource = resources.find((r) => r.identificator === identificator);
-      const baseURL = ApiService['api'].defaults.baseURL || 'http://192.168.1.101:3000';
+      const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
+      const baseURL = configuredBase || ApiService['api'].defaults.baseURL || 'http://192.168.1.101:3000';
       return {
         name: resource?.name || identificator,
         imageUrl: `${baseURL}/images/resources/${identificator}.png`,

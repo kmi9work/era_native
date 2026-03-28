@@ -201,7 +201,7 @@ class ApiService {
   // Создать новое предприятие
   async createPlant(data: {
     plant_level_id: number;
-    plant_place_id: number;
+    plant_place_id: number | null;
     economic_subject: string; // формат: "{guild_id}_Guild"
   }): Promise<any> {
     try {
