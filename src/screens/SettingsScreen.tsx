@@ -9,17 +9,13 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { BrotherPrinterService } from '../services/BrotherPrinterService';
 import ScannerStatusBadge from '../components/ScannerStatusBadge';
 
-interface SettingsScreenProps {
-  onClose: () => void;
-  onPlantWorkshop: () => void;
-  onProcessing: () => void;
-  onMarket: () => void;
-}
-
-const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorkshop, onProcessing, onMarket }) => {
+// Navigation prop приходит автоматически от React Navigation
+const SettingsScreen = () => {
+  const navigation = useNavigation();
   const [printerIp, setPrinterIp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown');
@@ -123,9 +119,6 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorksho
         <Text style={styles.title}>Настройки</Text>
         <View style={styles.headerRight}>
           <ScannerStatusBadge style={styles.headerBadge} />
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeButtonText}>✕</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -135,7 +128,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorksho
           
           <TouchableOpacity 
             style={styles.settingButton}
-            onPress={onPlantWorkshop}
+            onPress={() => navigation.navigate('PlantWorkshop' as never)}
           >
             <Text style={styles.settingButtonIcon}>🏭</Text>
             <View style={styles.settingButtonContent}>
@@ -147,9 +140,10 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorksho
             <Text style={styles.settingButtonArrow}>›</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
+          {/* Переработка — зарезервировано для будущего использования */}
+          {/* <TouchableOpacity 
             style={styles.settingButton}
-            onPress={onProcessing}
+            onPress={() => navigation.navigate('Processing' as never)}
           >
             <Text style={styles.settingButtonIcon}>⚙️</Text>
             <View style={styles.settingButtonContent}>
@@ -159,11 +153,11 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ onClose, onPlantWorksho
               </Text>
             </View>
             <Text style={styles.settingButtonArrow}>›</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           <TouchableOpacity 
             style={styles.settingButton}
-            onPress={onMarket}
+            onPress={() => navigation.navigate('Market' as never)}
           >
             <Text style={styles.settingButtonIcon}>💰</Text>
             <View style={styles.settingButtonContent}>
@@ -272,20 +266,6 @@ const styles = StyleSheet.create({
    headerBadge: {
      backgroundColor: 'rgba(255,255,255,0.25)',
    },
-   closeButton: {
-     width: 36,
-     height: 36,
-     borderRadius: 18,
-     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-     justifyContent: 'center',
-     alignItems: 'center',
-     marginLeft: 12,
-   },
-  closeButtonText: {
-    color: 'white',
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
   content: {
     flex: 1,
     padding: 20,
@@ -430,5 +410,4 @@ const styles = StyleSheet.create({
 });
 
 export default SettingsScreen;
-
 

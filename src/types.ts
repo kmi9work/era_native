@@ -7,12 +7,6 @@ export interface Player {
   jobs: string[];
 }
 
-export interface AuthResponse {
-  success: boolean;
-  player?: Player;
-  message?: string;
-}
-
 export interface Guild {
   id: number;
   name: string;
