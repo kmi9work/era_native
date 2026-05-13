@@ -14,7 +14,7 @@ type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
   EnterpriseList: { guildId: number; guildName: string };
   NewPlantType: { guildId: number; guildName: string };
-  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string };
+  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string; firstLevel: any };
   PlantConfirm: {
     plantTypeInfo: any;
     place: any;
@@ -56,12 +56,15 @@ export default function NewPlantTypeScreen() {
       .map((req: any) => `«${req.name}»`);
   };
 
-  const handleSelectPlantType = (plantType: any) => {
-    selectPlantType(plantType);
+  const handleSelectPlantType = async (plantType: any) => {
+    const firstLevel = await selectPlantType(plantType);
+    console.log('[DEBUG] NewPlantTypeScreen: selectPlantType returned firstLevel=', firstLevel);
+    console.log('[DEBUG] NewPlantTypeScreen: navigating to PlantLocation with firstLevel=', JSON.stringify(firstLevel));
     navigation.navigate('PlantLocation', {
       plantTypeInfo: plantType,
       guildId,
       guildName,
+      firstLevel,
     });
   };
 

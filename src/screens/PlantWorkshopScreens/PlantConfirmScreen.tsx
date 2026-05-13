@@ -11,7 +11,7 @@ import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navig
 import { Alert as AlertLib } from 'react-native';
 import { BrotherPrinterService } from '../../services/BrotherPrinterService';
 import ApiService from '../../services/api';
-import ResourceItem from '../../screens/ResourceItem';
+import PlantCostBlock from '../../screens/components/PlantCostBlock';
 import { gameConfig } from '../../config/game';
 
 type PlantWorkshopStackParamList = {
@@ -43,25 +43,15 @@ export default function PlantConfirmScreen() {
     guildId: number;
     guildName: string;
   };
+  console.log('[DEBUG] PlantConfirmScreen: route.params keys=', Object.keys(route.params));
+  console.log('[DEBUG] PlantConfirmScreen: firstLevel=', firstLevel);
+  console.log('[DEBUG] PlantConfirmScreen: firstLevel type=', typeof firstLevel);
 
   const [loading, setLoading] = useState(false);
   const isGameArtel = gameConfig.isActive('artel');
 
-  const getImagesBaseUrl = (): string => {
-    const base = (ApiService['api']?.defaults?.baseURL || '').replace(/\/+$/, '');
-    return base.replace(/\/backend$/i, '');
-  };
-
-  const getResourceInfo = (identificator: string) => {
-    const baseURL = getImagesBaseUrl() || ApiService['api'].defaults.baseURL || 'http://192.168.1.101:3000';
-    return {
-      name: identificator,
-      imageUrl: `${baseURL}/images/resources/${identificator}.png`,
-    };
-  };
-
   const handleBuildPlant = async () => {
-    if (!firstLevel || !place) {
+    if (!place) {
       Alert.alert('Ошибка', 'Не все данные заполнены');
       return;
     }
@@ -179,23 +169,9 @@ export default function PlantConfirmScreen() {
         </Text>
       )}
 
-      {firstLevel && (
-        <View style={styles.costBlock}>
-          <Text style={styles.costTitle}>Стоимость:</Text>
-          {Object.entries(firstLevel.price || {}).map(([resource, amount]) => {
-            const info = getResourceInfo(resource);
-            return (
-              <ResourceItem
-                key={resource}
-                identificator={resource}
-                name={info.name}
-                count={amount as number}
-                imageUrl={info.imageUrl}
-              />
-            );
-          })}
-        </View>
-      )}
+      <PlantCostBlock
+        cost={firstLevel?.price || {}}
+      />
 
       <TouchableOpacity
         style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}

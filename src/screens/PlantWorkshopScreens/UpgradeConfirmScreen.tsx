@@ -33,7 +33,7 @@ export default function UpgradeConfirmScreen() {
     initialPlantData?: any;
   };
 
-  const { state, processing, loadPlantForUpgrade, performUpgrade, reprintBarcode } =
+  const { state, processing, loadPlantForUpgrade, performUpgrade, performDowngrade, reprintBarcode } =
     useUpgradeConfirmation();
 
   const loadedPlantIdRef = useRef<number | null>(null);
@@ -61,10 +61,16 @@ export default function UpgradeConfirmScreen() {
     await reprintBarcode();
   };
 
+  const handleDowngrade = async () => {
+    await performDowngrade();
+  };
+
   const { selectedPlantForUpgrade, isMaxLevel } = state;
   const selectedPlant = selectedPlantForUpgrade;
   const plantType = selectedPlant?.plant_level?.plant_type?.name || 'Предприятие';
   const plantLevel = selectedPlant?.plant_level?.level || '?';
+  const plantLevelNum = selectedPlant?.plant_level?.level;
+  const canDowngrade = typeof plantLevelNum === 'number' && plantLevelNum > 1;
   const guildName = selectedPlant?.economic_subject?.name || selectedPlant?.economic_subject || 'Гильдия';
 
   return (
@@ -96,16 +102,28 @@ export default function UpgradeConfirmScreen() {
 
       {/* Кнопки действий — фиксированные внизу */}
       <View style={styles.actionsContainer}>
-        <TouchableOpacity
-          style={[styles.primaryButton, !hasUpgradeCost && styles.primaryButtonDisabled]}
-          activeOpacity={0.7}
-          onPress={handleUpgrade}
-          disabled={!hasUpgradeCost}
-        >
-          <Text style={styles.primaryButtonText}>
-            {isMaxLevel ? 'Макс.' : 'Улучшить'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.primaryButton, styles.halfButton, !hasUpgradeCost && styles.primaryButtonDisabled]}
+            activeOpacity={0.7}
+            onPress={handleUpgrade}
+            disabled={!hasUpgradeCost}
+          >
+            <Text style={styles.primaryButtonText}>
+              {isMaxLevel ? 'Макс.' : 'Улучшить'}
+            </Text>
+          </TouchableOpacity>
+
+          {canDowngrade && (
+            <TouchableOpacity
+              style={[styles.primaryButton, styles.halfButton, styles.downgradeButton]}
+              activeOpacity={0.7}
+              onPress={handleDowngrade}
+            >
+              <Text style={styles.primaryButtonText}>Уменьшить уровень</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <TouchableOpacity
           style={[styles.primaryButton, styles.secondaryButton]}
@@ -157,6 +175,13 @@ const styles = StyleSheet.create({
     borderTopColor: '#e0e0e0',
     paddingTop: 20,
   },
+  row: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  halfButton: {
+    flex: 1,
+  },
   primaryButton: {
     backgroundColor: '#1976d2',
     paddingVertical: 15,
@@ -172,6 +197,9 @@ const styles = StyleSheet.create({
   },
   primaryButtonDisabled: {
     backgroundColor: '#bdbdbd',
+  },
+  downgradeButton: {
+    backgroundColor: '#e65100',
   },
   secondaryButton: {
     backgroundColor: 'transparent',

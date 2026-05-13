@@ -9,13 +9,14 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navigation/native';
 import ResourceItem from '../../screens/ResourceItem';
+import PlantCostBlock from '../../screens/components/PlantCostBlock';
 import { usePlantBuilding } from '../hooks/usePlantBuilding';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
   EnterpriseList: { guildId: number; guildName: string };
   NewPlantType: { guildId: number; guildName: string };
-  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string };
+  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string; firstLevel: any };
   PlantConfirm: {
     plantTypeInfo: any;
     place: any;
@@ -33,10 +34,11 @@ type PlantWorkshopStackParamList = {
 export default function PlantLocationScreen() {
   const navigation = useNavigation<NavigationProp<PlantWorkshopStackParamList>>();
   const route = useRoute<RouteProp<PlantWorkshopStackParamList, 'PlantLocation'>>();
-  const { plantTypeInfo, guildId, guildName } = route.params as {
+  const { plantTypeInfo, guildId, guildName, firstLevel: incomingFirstLevel } = route.params as {
     plantTypeInfo: any;
     guildId: number;
     guildName: string;
+    firstLevel: any;
   };
 
   const { state, selectPlace } = usePlantBuilding();
@@ -47,11 +49,15 @@ export default function PlantLocationScreen() {
 
   const handleSelectPlace = (place: any) => {
     selectPlace(place);
-    // Переходим к подтверждению
+    const firstLevelToPass = incomingFirstLevel || state.firstLevel;
+    console.log('[DEBUG] PlantLocationScreen: incomingFirstLevel=', incomingFirstLevel);
+    console.log('[DEBUG] PlantLocationScreen: state.firstLevel=', state.firstLevel);
+    console.log('[DEBUG] PlantLocationScreen: firstLevelToPass=', firstLevelToPass);
+    // Переходим к подтверждению — используем firstLevel из params, если он есть
     navigation.navigate('PlantConfirm', {
       plantTypeInfo,
       place,
-      firstLevel: state.firstLevel,
+      firstLevel: firstLevelToPass,
       guildId,
       guildName,
     });
@@ -72,22 +78,10 @@ export default function PlantLocationScreen() {
         </Text>
       )}
 
-      {state.firstLevel && (
-        <View style={styles.costBlock}>
-          <Text style={styles.costTitle}>Стоимость строительства:</Text>
-          {Object.entries(state.firstLevel.price || {}).map(([resource, amount]) => {
-            return (
-              <ResourceItem
-                key={resource}
-                identificator={resource}
-                name={resource}
-                count={amount as number}
-                imageUrl=""
-              />
-            );
-          })}
-        </View>
-      )}
+      <PlantCostBlock
+        cost={(incomingFirstLevel || state.firstLevel)?.price || {}}
+        title="Стоимость строительства:"
+      />
 
       <Text style={styles.sectionTitle}>Выберите место строительства:</Text>
 

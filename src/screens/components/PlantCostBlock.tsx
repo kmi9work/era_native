@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import ResourceItem from '../ResourceItem';
 import ApiService from '../../services/api';
+import { CONFIG } from '../../config';
 
 interface PlantCostBlockProps {
   /** Стоимость в формате { resourceIdentificator: amount } */
@@ -40,14 +41,16 @@ export default function PlantCostBlock({
   }, []);
 
   const getImagesBaseUrl = useCallback((): string => {
-    const base = (ApiService['api']?.defaults?.baseURL || '').replace(/\/+$/, '');
-    return base.replace(/\/backend$/i, '');
+    const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
+    if (configuredBase) return configuredBase;
+    const apiBase = (ApiService['api']?.defaults?.baseURL || '').replace(/\/+$/, '');
+    return apiBase.replace(/\/backend$/i, '');
   }, []);
 
   const getResourceInfo = useCallback(
     (identificator: string) => {
       const resource = resources.find((r) => r.identificator === identificator);
-      const baseURL = getImagesBaseUrl() || ApiService['api'].defaults.baseURL || 'http://192.168.1.101:3000';
+      const baseURL = getImagesBaseUrl();
       return {
         name: resource?.name || identificator,
         imageUrl: `${baseURL}/images/resources/${identificator}.png`,

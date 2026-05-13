@@ -176,7 +176,7 @@ export const usePlantProcessingLogic = () => {
     (identificator: string) => {
       const resource = resources.find((r) => r.identificator === identificator);
       const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
-      const baseURL = configuredBase || ApiService['api'].defaults.baseURL || 'http://192.168.1.101:3000';
+      const baseURL = configuredBase || (ApiService['api']?.defaults?.baseURL || '');
       return {
         name: resource?.name || identificator,
         imageUrl: `${baseURL}/images/resources/${identificator}.png`,
@@ -377,31 +377,27 @@ export const usePlantProcessingLogic = () => {
 
     if (targetArray.length === 0) return;
 
+    const requestCopy = JSON.parse(JSON.stringify(targetArray));
     let totalFrom: any[] = [];
     let totalTo: any[] = [];
 
     for (const formula of state.selectedPlant.plant_level.formulas) {
       const hasMatchingInput = formula.from?.some((f: any) =>
-        targetArray.some((t) => t.identificator === f.identificator)
+        targetArray.some((t: any) => t.identificator === f.identificator)
       );
       if (!hasMatchingInput) continue;
 
       const result = countRequest(formula, targetArray, 'from');
+      resArraySum(requestCopy, result.from, -1);
       totalFrom = resArraySum(totalFrom, result.from);
       totalTo = resArraySum(totalTo, result.to);
     }
-
-    const resultChange = resArraySum(
-      JSON.parse(JSON.stringify(totalTo)),
-      totalFrom,
-      -1,
-    );
 
     setState((prev) => ({
       ...prev,
       resultFrom: normalizeResourceArray(totalFrom),
       resultTo: normalizeResourceArray(totalTo),
-      resultChange: normalizeResourceArray(resultChange),
+      resultChange: normalizeResourceArray(requestCopy.filter((item: any) => item.count > 0)),
     }));
   }, [state.selectedPlant, state.inputFrom, state.formulaFrom]);
 
@@ -423,31 +419,27 @@ export const usePlantProcessingLogic = () => {
 
     if (targetArray.length === 0) return;
 
+    const requestCopy = JSON.parse(JSON.stringify(targetArray));
     let totalFrom: any[] = [];
     let totalTo: any[] = [];
 
     for (const formula of state.selectedPlant.plant_level.formulas) {
       const hasMatchingOutput = formula.to?.some((f: any) =>
-        targetArray.some((t) => t.identificator === f.identificator)
+        targetArray.some((t: any) => t.identificator === f.identificator)
       );
       if (!hasMatchingOutput) continue;
 
       const result = countRequest(formula, targetArray, 'to');
+      resArraySum(requestCopy, result.to, -1);
       totalFrom = resArraySum(totalFrom, result.from);
       totalTo = resArraySum(totalTo, result.to);
     }
-
-    const resultChange = resArraySum(
-      JSON.parse(JSON.stringify(totalTo)),
-      totalFrom,
-      -1,
-    );
 
     setState((prev) => ({
       ...prev,
       resultFrom: normalizeResourceArray(totalFrom),
       resultTo: normalizeResourceArray(totalTo),
-      resultChange: normalizeResourceArray(resultChange),
+      resultChange: normalizeResourceArray(requestCopy.filter((item: any) => item.count > 0)),
     }));
   }, [state.selectedPlant, state.inputTo, state.formulaTo]);
 

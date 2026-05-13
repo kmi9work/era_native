@@ -24,7 +24,7 @@ export default function ProcessingBlock({
   loading = false,
 }: ProcessingBlockProps) {
   const { state } = processing;
-  const { isExtractive, formulaFrom, formulaTo, resultTo, resultFrom } = state;
+  const { isExtractive, formulaFrom, formulaTo, resultTo, resultFrom, resultChange } = state;
 
   // Определяем что показывать
   const hasProcessingFormulas = formulaFrom.length > 0 || formulaTo.length > 0;
@@ -168,7 +168,7 @@ export default function ProcessingBlock({
       )}
 
       {/* Результаты расчёта */}
-      {(!isExtractive || formulaFrom.length > 0) && (resultTo.length > 0 || resultFrom.length > 0) && (
+      {(!isExtractive || formulaFrom.length > 0) && (resultTo.length > 0 || resultFrom.length > 0 || resultChange.length > 0) && (
         <View style={styles.resultsContainer}>
           {resultTo.length > 0 && (
             <View style={styles.resultBlock}>
@@ -204,11 +204,28 @@ export default function ProcessingBlock({
               })}
             </View>
           )}
+          {resultChange.length > 0 && (
+            <View style={[styles.resultBlock, styles.resultChangeBlock]}>
+              <Text style={styles.resultChangeTitle}>Остатки</Text>
+              {resultChange.map((resource: any) => {
+                const info = getResourceInfo(resource.identificator);
+                return (
+                  <ResourceItem
+                    key={resource.identificator}
+                    identificator={resource.identificator}
+                    name={info.name}
+                    count={resource.count}
+                    imageUrl={info.imageUrl}
+                  />
+                );
+              })}
+            </View>
+          )}
         </View>
       )}
 
       {/* Кнопка сбросить */}
-      {(!isExtractive || formulaFrom.length > 0) && (resultTo.length > 0 || resultFrom.length > 0) && (
+      {(!isExtractive || formulaFrom.length > 0) && (resultTo.length > 0 || resultFrom.length > 0 || resultChange.length > 0) && (
         <TouchableOpacity
           style={styles.resetButton}
           onPress={processing.reset}
@@ -352,6 +369,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: '#2e7d32',
+    marginBottom: 6,
+  },
+  resultChangeBlock: {
+    borderLeftColor: '#ff9800',
+    backgroundColor: '#fff8e1',
+  },
+  resultChangeTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#e65100',
     marginBottom: 6,
   },
   emptyText: {

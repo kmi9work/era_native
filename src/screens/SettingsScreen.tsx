@@ -141,7 +141,7 @@ const SettingsScreen = () => {
           </TouchableOpacity>
 
           {/* Переработка — зарезервировано для будущего использования */}
-          {/* <TouchableOpacity 
+          {/* <TouchableOpacity
             style={styles.settingButton}
             onPress={() => navigation.navigate('Processing' as never)}
           >

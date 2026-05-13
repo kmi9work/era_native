@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
 import ApiService from '../../services/api';
 import { BrotherPrinterService } from '../../services/BrotherPrinterService';
@@ -25,11 +25,13 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
   });
 
   const processing = usePlantProcessingLogic();
+  const plantIdRef = useRef<number | null>(null);
 
   const loadPlantForUpgrade = useCallback(async (plantId: number) => {
     try {
+      plantIdRef.current = plantId;
       const data = await ApiService.getPlant(plantId);
-      
+
       if (!data || !data.economic_subject_id) {
         Alert.alert('Ошибка', 'Не удалось загрузить данные предприятия');
         return;
@@ -73,7 +75,7 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     try {
       const result = await ApiService.upgradePlant(state.selectedPlantForUpgrade.id);
       Alert.alert('Успех', result.msg || 'Предприятие успешно улучшено!');
-      
+
       // Сброс состояния
       setState({
         plantInfo: null,
@@ -93,6 +95,26 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     }
   }, [state.selectedPlantForUpgrade, onComplete, processing]);
 
+  const performDowngrade = useCallback(async (): Promise<boolean> => {
+    const plantId = state.selectedPlantForUpgrade?.id || plantIdRef.current;
+    if (!plantId) {
+      Alert.alert('Ошибка', 'Предприятие не выбрано');
+      return false;
+    }
+
+    try {
+      const result = await ApiService.downgradePlant(plantId);
+      Alert.alert('Успех', result.msg || 'Уровень предприятия уменьшен!');
+
+      // Перезагружаем данные предприятия
+      await loadPlantForUpgrade(plantId);
+      return true;
+    } catch (error: any) {
+      Alert.alert('Ошибка', error.message);
+      return false;
+    }
+  }, [state.selectedPlantForUpgrade, loadPlantForUpgrade]);
+
   const reprintBarcode = useCallback(async (
     plantId?: number,
     guildName?: string,
@@ -102,8 +124,8 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     const gName = guildName || state.selectedPlantForUpgrade?.economic_subject?.name || 'Неизвестная гильдия';
     let rName = regionName;
     if (!rName && state.selectedPlantForUpgrade?.plant_place) {
-      rName = state.selectedPlantForUpgrade.plant_place.name || 
-              state.selectedPlantForUpgrade.plant_place.region_name || 
+      rName = state.selectedPlantForUpgrade.plant_place.name ||
+              state.selectedPlantForUpgrade.plant_place.region_name ||
               'Неизвестный регион';
     }
     if (!rName) rName = 'Неизвестный регион';
@@ -114,7 +136,7 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     }
 
     const printResult = await BrotherPrinterService.printBarcode(idToUse, gName, rName);
-    
+
     if (printResult.success) {
       Alert.alert('Успех', `Штрихкод успешно напечатан!\nID: ${idToUse}`);
       return true;
@@ -139,6 +161,7 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     processing,
     loadPlantForUpgrade,
     performUpgrade,
+    performDowngrade,
     reprintBarcode,
     clearState,
   };

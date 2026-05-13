@@ -46,8 +46,8 @@ export default function App() {
                 animation: 'slide_from_bottom',
               }}
             />
-            <Stack.Screen 
-              name="Market" 
+            <Stack.Screen
+              name="Market"
               component={MarketScreen}
               options={{ title: 'Рынок' }}
             />

@@ -4,6 +4,7 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navigation/native';
 import { Alert } from 'react-native';
@@ -20,7 +21,7 @@ type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
   EnterpriseList: { guildId: number; guildName: string };
   NewPlantType: { guildId: number; guildName: string };
-  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string };
+  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string; firstLevel: any };
   PlantConfirm: {
     plantTypeInfo: any;
     place: any;
@@ -34,6 +35,7 @@ type PlantWorkshopStackParamList = {
 /**
  * Экран списка предприятий гильдии.
  * Отображает список предприятий с возможностью выбора, удаления и перехода к созданию нового.
+ * Сканер обрабатывается на уровне PlantWorkshopScreen.
  */
 export default function EnterpriseListScreen() {
   const navigation = useNavigation<NavigationProp<PlantWorkshopStackParamList>>();
@@ -76,12 +78,19 @@ export default function EnterpriseListScreen() {
     <View style={styles.content}>
       <Text style={styles.stepTitle}>Предприятия гильдии</Text>
 
-      <PlantList
-        plants={state.guildPlants}
-        onSelectPlant={handleSelectPlant}
-        onDeletePlant={handleDeletePlant}
-        loading={state.loading}
-      />
+      {state.loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#1976d2" />
+          <Text style={styles.loadingText}>Загрузка...</Text>
+        </View>
+      ) : (
+        <PlantList
+          plants={state.guildPlants}
+          onSelectPlant={handleSelectPlant}
+          onDeletePlant={handleDeletePlant}
+          loading={false}
+        />
+      )}
 
       {/* Кнопка "Новое предприятие" */}
       <TouchableOpacity
@@ -133,5 +142,16 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 10,
   },
 });

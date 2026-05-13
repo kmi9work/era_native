@@ -1,7 +1,49 @@
 import axios from 'axios';
 import { Player } from '../types';
+import { CONFIG } from '../config';
 
-const API_BASE_URL = 'http://192.168.1.38:3000';
+// Declare btoa for React Native compatibility
+declare var btoa: (str: string) => string;
+
+// Get backend URL from config
+const getBackendUrl = () => {
+  return CONFIG.BACKEND_URL;
+};
+
+const API_BASE_URL = getBackendUrl();
+
+// Простая функция для Base64 кодирования (совместима с React Native)
+const base64Encode = (str: string): string => {
+  if (typeof btoa !== 'undefined') {
+    return btoa(str);
+  }
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+  let output = '';
+  let i = 0;
+  while (i < str.length) {
+    const a = str.charCodeAt(i++);
+    const b = i < str.length ? str.charCodeAt(i++) : NaN;
+    const c = i < str.length ? str.charCodeAt(i++) : NaN;
+
+    const bitmap = (a << 16) | ((b || 0) << 8) | (c || 0);
+    
+    output += chars.charAt((bitmap >> 18) & 63);
+    output += chars.charAt((bitmap >> 12) & 63);
+    output += isNaN(b) ? '=' : chars.charAt((bitmap >> 6) & 63);
+    output += isNaN(c) ? '=' : chars.charAt(bitmap & 63);
+  }
+  return output;
+};
+
+// Создаем Basic Auth заголовок
+const getAuthHeader = () => {
+  if (CONFIG.BASIC_AUTH?.username && CONFIG.BASIC_AUTH?.password) {
+    const credentials = `${CONFIG.BASIC_AUTH.username}:${CONFIG.BASIC_AUTH.password}`;
+    const base64Credentials = base64Encode(credentials);
+    return `Basic ${base64Credentials}`;
+  }
+  return undefined;
+};
 
 class ApiService {
   private api = axios.create({
@@ -15,6 +57,26 @@ class ApiService {
   });
 
   constructor() {
+    // Добавляем Basic Auth заголовок ко всем запросам
+    const authHeader = getAuthHeader();
+    if (authHeader) {
+      this.api.defaults.headers.common['Authorization'] = authHeader;
+    }
+
+    // Интерцептор для обработки запросов - добавляем Basic Auth если нужно
+    this.api.interceptors.request.use(
+      (config) => {
+        const authHeader = getAuthHeader();
+        if (authHeader && config.headers) {
+          config.headers['Authorization'] = authHeader;
+        }
+        return config;
+      },
+      (error) => {
+        return Promise.reject(error);
+      }
+    );
+
     this.api.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -95,6 +157,16 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Ошибка улучшения предприятия');
+    }
+  }
+
+  // Уменьшить уровень предприятия
+  async downgradePlant(plantId: number): Promise<any> {
+    try {
+      const response = await this.api.patch(`/plants/${plantId}/downgrade`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Ошибка уменьшения уровня предприятия');
     }
   }
 

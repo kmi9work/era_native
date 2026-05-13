@@ -15,7 +15,7 @@ type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
   EnterpriseList: { guildId: number; guildName: string };
   NewPlantType: { guildId: number; guildName: string };
-  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string };
+  PlantLocation: { plantTypeInfo: any; guildId: number; guildName: string; firstLevel: any };
   PlantConfirm: {
     plantTypeInfo: any;
     place: any;

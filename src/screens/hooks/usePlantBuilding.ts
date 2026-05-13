@@ -62,7 +62,7 @@ export function usePlantBuilding() {
     });
   }, [state.availablePlaces, filterCategoryId]);
 
-  const selectPlantType = useCallback(async (plantTypeInfo: AvailablePlaceInfo) => {
+  const selectPlantType = useCallback(async (plantTypeInfo: AvailablePlaceInfo): Promise<PlantLevel | null> => {
     setState((prev) => ({ ...prev, selectedPlantType: plantTypeInfo, selectedPlace: null }));
     
     try {
@@ -75,8 +75,11 @@ export function usePlantBuilding() {
       if (plantTypeInfo.available_places.length === 1) {
         setState((prev) => ({ ...prev, selectedPlace: plantTypeInfo.available_places[0] }));
       }
+      
+      return first || null;
     } catch (error: any) {
       Alert.alert('Ошибка', error.message);
+      return null;
     }
   }, []);
 
