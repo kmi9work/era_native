@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 import ProcessingHeader from './components/ProcessingHeader';
 import ProcessingContent from './components/ProcessingContent';
 import ProcessingMultiContent from './components/processing/ProcessingMultiContent';

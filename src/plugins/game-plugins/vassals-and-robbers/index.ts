@@ -1,5 +1,4 @@
 // EXAMPLE: Это шаблонный файл для создания своего плагина
-import { componentRegistry } from '../../../registry';
 import { gameConfig } from '../../../config/game';
 
 /**

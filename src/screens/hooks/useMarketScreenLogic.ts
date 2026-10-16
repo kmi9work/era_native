@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
-import ApiService from '../../services/api';
+import { getErrorMessage } from '../../data/apiErrors';
+import { useCountries } from '../../data/hooks/useCountries';
+import { useGuilds } from '../../data/hooks/useGuilds';
+import { refreshPricesNow, usePrices } from '../../data/hooks/usePrices';
+import { useRobberyProbabilities, type RobberyProbability } from '../../data/hooks/useRobberyProbabilities';
+import { queryKeys } from '../../data/keys';
+import { queryClient } from '../../data/queryClient';
 import CaravanService from '../../services/CaravanService';
-import { Guild, Country, Resource } from '../../types';
+import ApiService from '../../services/api';
+import { Country, Guild, Resource } from '../../types';
 import { gameConfig } from '../../config/game';
 import { CONFIG } from '../../config';
+import { useMarketWatch } from './useMarketWatch';
 
 interface MarketResources {
   off_market: Resource[];
@@ -23,10 +31,7 @@ interface ResToPlayer {
   count: number;
 }
 
-interface RobberyProbability {
-  probability: number;
-  robbed?: boolean;
-}
+const EMPTY_MARKET_RESOURCES: MarketResources = { off_market: [], to_market: [] };
 
 export interface UseMarketScreenLogicReturn {
   // State
@@ -48,6 +53,15 @@ export interface UseMarketScreenLogicReturn {
   newRelations: boolean;
   contrabandConfirmed: boolean;
   loading: boolean;
+  /** идёт первая загрузка данных рынка (спиннер вместо списка) */
+  initialLoading: boolean;
+  /** идёт любое фоновое обновление рынка */
+  refreshing: boolean;
+  /** цены изменились, пока открыта форма расчёта (Д7) */
+  pricesChanged: boolean;
+  /** нет связи с сервером — показаны последние данные */
+  isOffline: boolean;
+  updatedAt: number | undefined;
   isGameArtel: boolean;
   isEmbargoActiveForSelected: boolean;
 
@@ -76,33 +90,49 @@ export interface UseMarketScreenLogicReturn {
   getImagesBaseUrl: () => string;
 }
 
+/**
+ * Логика экрана рынка, переведённая на единый слой данных.
+ *
+ * Все данные приходят из слоя: гильдии (['guilds']), страны (['countries'], опрос 30 с),
+ * цены (['prices'], опрос 60 с), вероятности ограбления (['robbery', id]).
+ * Локальных setInterval и повторной загрузки «на монтирование» здесь больше нет,
+ * дубль загрузки рынка (прежние два пути) удалён — остался один handleLoadMarketData.
+ */
 export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
-  // State
-  const [marketGuilds, setMarketGuilds] = useState<Guild[]>([]);
+  const guildsQuery = useGuilds();
+  const countriesQuery = useCountries();
+  const pricesQuery = usePrices();
+
+  const marketGuilds = useMemo(() => (guildsQuery.data as Guild[]) ?? [], [guildsQuery.data]);
+  const countries = useMemo(() => (countriesQuery.data as Country[]) ?? [], [countriesQuery.data]);
+  const marketResources: MarketResources = pricesQuery.data?.prices ?? EMPTY_MARKET_RESOURCES;
+
+  const guildIds = useMemo(() => marketGuilds.map((guild) => guild.id), [marketGuilds]);
+  const robbery = useRobberyProbabilities(guildIds);
+
   const [selectedMarketGuild, setSelectedMarketGuild] = useState<number | null>(null);
-  const [countries, setCountries] = useState<Country[]>([]);
   const [selectedCountry, setSelectedCountry] = useState<number | null>(null);
-  const [marketResources, setMarketResources] = useState<MarketResources>({ off_market: [], to_market: [] });
   const [resourcesPlSells, setResourcesPlSells] = useState<ResourceCount[]>([]);
   const [resourcesPlBuys, setResourcesPlBuys] = useState<ResourceCount[]>([]);
   const [showMarketForm, setShowMarketForm] = useState(false);
   const [viaVyatka, setViaVyatka] = useState(false);
   const [isCarProtected, setIsCarProtected] = useState(false);
-  const [guildRobberyProbabilities, setGuildRobberyProbabilities] = useState<Record<number, RobberyProbability>>({});
   const [resToPlayer, setResToPlayer] = useState<ResToPlayer[]>([]);
   const [totalPurchaseCost, setTotalPurchaseCost] = useState(0);
   const [totalSaleIncome, setTotalSaleIncome] = useState(0);
   const [caravanPending, setCaravanPending] = useState(false);
-  const [pollInterval, setPollInterval] = useState<ReturnType<typeof setInterval> | null>(null);
-  const [newRelations, setNewRelations] = useState(false);
   const [contrabandConfirmed, setContrabandConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const prevCountriesRef = useRef<Country[]>([]);
+  // Д6: режим игры определяется конфигом, а не длиной списка стран:
+  // пустой или неудачный ответ по странам больше не переключает рынок в режим «без страны».
+  const isGameArtel = gameConfig.isActive('artel');
+
+  const watch = useMarketWatch(countries, pricesQuery.data?.prices, { formOpen: showMarketForm });
+  const newRelations = watch.newRelations;
+  const pricesChanged = watch.pricesChanged;
 
   // Вычисляемые значения
-  const isGameArtel = gameConfig.isActive('artel') || countries.length === 0;
-  
   const selectedCountryObj = useMemo(
     () => (selectedCountry != null ? countries.find(c => c.id === selectedCountry) : undefined),
     [countries, selectedCountry],
@@ -113,242 +143,42 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     return (selectedCountryObj?.params?.embargo || 0) > 0;
   }, [isGameArtel, selectedCountryObj]);
 
-  // Загрузка вероятностей ограбления
-  const loadRobberyProbabilitiesForGuilds = useCallback(async (guildsList: Guild[]) => {
-    const probabilities: Record<number, RobberyProbability> = {};
-    for (const guild of guildsList) {
-      try {
-        const result = await ApiService.checkRobbery(guild.id);
-        probabilities[guild.id] = {
-          probability: result.probability || 0,
-          robbed: result.robbed || false
-        };
-      } catch (error) {
-        console.error(`Ошибка загрузки вероятности ограбления для гильдии ${guild.id}:`, error);
-        probabilities[guild.id] = { probability: 0, robbed: false };
-      }
-    }
-    setGuildRobberyProbabilities(probabilities);
-  }, []);
-
-  // Загрузка данных для рынка
-  const handleLoadMarketData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [guildsData, countriesData, resourcesData] = await Promise.all([
-        ApiService.getGuildsList(),
-        ApiService.getForeignCountries(),
-        ApiService.getResourcesWithPrices()
-      ]);
-
-      setMarketGuilds(guildsData);
-      setCountries(countriesData);
-      CaravanService.setCountries(countriesData);
-
-      if (resourcesData.prices) {
-        setMarketResources(resourcesData.prices);
-        CaravanService.setResources(resourcesData.prices);
-
-        // Диагностика: если в Artel-режиме бэкенд отдаёт "обычные" цены со странами,
-        // то на клиенте (где страны скрыты) ресурсы отфильтруются и получится пусто.
-        if (gameConfig.isActive('artel')) {
-          const toMarket = resourcesData.prices?.to_market ?? [];
-          const offMarket = resourcesData.prices?.off_market ?? [];
-          const hasCountrylessResources = [...toMarket, ...offMarket].some((res: any) => {
-            return res?.country_id == null && (res?.country == null || res?.country?.id == null);
-          });
-
-          if (!hasCountrylessResources && (toMarket.length > 0 || offMarket.length > 0)) {
-            Alert.alert(
-              'Artel: рынок не настроен',
-              'Бэкенд вернул цены со странами. Для Artel должны приходить ресурсы без страны (country=null). Перезапусти бэкенд в режиме Artel.'
-            );
-          }
-        }
-      }
-
-      // Устанавливаем первую страну по умолчанию (для Artel стран нет — selectedCountry остаётся null)
-      if (countriesData.length > 0) {
-        setSelectedCountry(countriesData[0].id);
-      }
-
-      // Загружаем вероятности ограбления после установки гильдий
-      await loadRobberyProbabilitiesForGuilds(guildsData);
-
-      // Настраиваем polling: как в era_front — опрашиваем страны (отношения/эмбарго),
-      // а цены обновляются вручную кнопкой "Обновить цены".
-      if (pollInterval) {
-        clearInterval(pollInterval);
-      }
-      const interval = setInterval(async () => {
-        try {
-          const newCountries = await ApiService.getForeignCountries();
-          setCountries(newCountries);
-          CaravanService.setCountries(newCountries);
-        } catch (error) {
-          console.error('Ошибка обновления данных рынка:', error);
-        }
-      }, 30000); // 30 секунд
-      setPollInterval(interval);
-      setNewRelations(false);
-      setContrabandConfirmed(false);
-    } catch (error: any) {
-      throw new Error(error.message || 'Ошибка загрузки данных рынка');
-    } finally {
-      setLoading(false);
-    }
-  }, [loadRobberyProbabilitiesForGuilds, pollInterval]);
-
-  // Загрузка данных рынка при монтировании
+  // CaravanService — единственный потребитель цен и стран, и синхронизирует его теперь
+  // только этот хук (раньше setCountries/setResources вызывались вручную в двух местах).
   useEffect(() => {
-    let cancelled = false;
-    
-    const loadData = async () => {
-      console.log('[useMarketScreenLogic] Loading market data...');
-      setLoading(true);
-      try {
-        console.log('[useMarketScreenLogic] Fetching guilds, countries, resources...');
-        const [guildsData, countriesData, resourcesData] = await Promise.all([
-          ApiService.getGuildsList(),
-          ApiService.getForeignCountries(),
-          ApiService.getResourcesWithPrices()
-        ]);
+    CaravanService.setCountries(countries);
+  }, [countries]);
 
-        console.log('[useMarketScreenLogic] Raw data received:', {
-          guildsCount: guildsData?.length || 0,
-          countriesCount: countriesData?.length || 0,
-          hasResources: !!resourcesData?.prices
+  useEffect(() => {
+    if (pricesQuery.data?.prices) {
+      CaravanService.setResources(pricesQuery.data.prices);
+
+      // Диагностика: если в Artel-режиме бэкенд отдаёт «обычные» цены со странами,
+      // то на клиенте (где страны скрыты) ресурсы отфильтруются и получится пусто.
+      if (gameConfig.isActive('artel')) {
+        const toMarket = pricesQuery.data.prices?.to_market ?? [];
+        const offMarket = pricesQuery.data.prices?.off_market ?? [];
+        const hasCountrylessResources = [...toMarket, ...offMarket].some((res: any) => {
+          return res?.country_id == null && (res?.country == null || res?.country?.id == null);
         });
 
-        if (cancelled) return;
-
-        setMarketGuilds(guildsData);
-        setCountries(countriesData);
-        CaravanService.setCountries(countriesData);
-
-        if (resourcesData.prices) {
-          setMarketResources(resourcesData.prices);
-          CaravanService.setResources(resourcesData.prices);
-
-          if (gameConfig.isActive('artel')) {
-            const toMarket = resourcesData.prices?.to_market ?? [];
-            const offMarket = resourcesData.prices?.off_market ?? [];
-            const hasCountrylessResources = [...toMarket, ...offMarket].some((res: any) => {
-              return res?.country_id == null && (res?.country == null || res?.country?.id == null);
-            });
-
-            if (!hasCountrylessResources && (toMarket.length > 0 || offMarket.length > 0)) {
-              Alert.alert(
-                'Artel: рынок не настроен',
-                'Бэкенд вернул цены со странами. Для Artel должны приходить ресурсы без страны (country=null). Перезапусти бэкенд в режиме Artel.'
-              );
-            }
-          }
-        }
-
-        if (countriesData.length > 0) {
-          setSelectedCountry(countriesData[0].id);
-        }
-
-        // Загружаем вероятности ограбления
-        const probabilities: Record<number, RobberyProbability> = {};
-        for (const guild of guildsData) {
-          try {
-            const result = await ApiService.checkRobbery(guild.id);
-            probabilities[guild.id] = {
-              probability: result.probability || 0,
-              robbed: result.robbed || false
-            };
-          } catch (error) {
-            probabilities[guild.id] = { probability: 0, robbed: false };
-          }
-        }
-        if (!cancelled) {
-          setGuildRobberyProbabilities(probabilities);
-        }
-
-        // Настраиваем polling
-        const interval = setInterval(async () => {
-          try {
-            const newCountries = await ApiService.getForeignCountries();
-            setCountries(newCountries);
-            CaravanService.setCountries(newCountries);
-          } catch (error) {
-            console.error('Ошибка обновления данных рынка:', error);
-          }
-        }, 30000);
-
-        if (!cancelled) {
-          setPollInterval(interval);
-          setNewRelations(false);
-          setContrabandConfirmed(false);
-        }
-      } catch (error: any) {
-        if (!cancelled) {
-          console.error('Ошибка загрузки данных рынка:', error);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
+        if (!hasCountrylessResources && (toMarket.length > 0 || offMarket.length > 0)) {
+          Alert.alert(
+            'Artel: рынок не настроен',
+            'Бэкенд вернул цены со странами. Для Artel должны приходить ресурсы без страны (country=null). Перезапусти бэкенд в режиме Artel.'
+          );
         }
       }
-    };
-
-    loadData();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Очистка polling при размонтировании
-  useEffect(() => {
-    return () => {
-      if (pollInterval) {
-        clearInterval(pollInterval);
-      }
-    };
-  }, [pollInterval]);
-
-  // Отслеживание изменений отношений и эмбарго
-  useEffect(() => {
-    if (prevCountriesRef.current.length === 0) {
-      prevCountriesRef.current = countries;
-      return;
     }
+  }, [pricesQuery.data]);
 
-    // Проверяем изменения отношений (одним сообщением, как в era_front)
-    const relationChanged = countries.some((country) => {
-      const prevCountry = prevCountriesRef.current.find(c => c.id === country.id);
-      return prevCountry && prevCountry.relations !== country.relations;
-    });
-    if (relationChanged) {
-      setNewRelations(true);
-      Alert.alert(
-        'Изменение отношений!',
-        'Отношения между странами изменились. Закройте рынок, обработайте все пришедшие караваны, обновите ценники, затем нажмите "Обновить цены".',
-        [{ text: 'Закрыть' }],
-      );
-    }
-
-    // Проверяем изменения эмбарго
-    countries.forEach((country) => {
-      const prevCountry = prevCountriesRef.current.find(c => c.id === country.id);
-      if (prevCountry) {
-        const prevEmbargo = prevCountry.params?.embargo || 0;
-        const currentEmbargo = country.params?.embargo || 0;
-        if (prevEmbargo !== currentEmbargo) {
-          if (currentEmbargo > 0) {
-            Alert.alert('Эмбарго введено!', `${country.name} ввела эмбарго против Руси!`);
-          } else {
-            Alert.alert('Эмбарго снято!', `${country.name} сняла эмбарго!`);
-          }
-        }
-      }
-    });
-
-    prevCountriesRef.current = countries;
-  }, [countries]);
+  // Страна по умолчанию: выбираем первую, когда список пришёл или прежний выбор исчез.
+  // Выбор мастера при фоновом обновлении не сбрасывается.
+  useEffect(() => {
+    if (isGameArtel || countries.length === 0) return;
+    if (selectedCountry != null && countries.some((country) => country.id === selectedCountry)) return;
+    setSelectedCountry(countries[0].id);
+  }, [countries, selectedCountry, isGameArtel]);
 
   // Обновление массивов ресурсов при изменении страны (или при режиме «рынок без страны»)
   const updateResourcesArrays = useCallback((countryId: number | null) => {
@@ -363,17 +193,16 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     const sellsArray = filteredToMarket.map(item => ({
       identificator: item.identificator,
       count: null,
-      name: item.name
+      name: item.name,
     }));
-    
+
     // Добавляем золото в resourcesPlSells (как в era_front)
-    const goldItem = {
+    sellsArray.push({
       identificator: 'gold',
       count: null,
-      name: 'Золото'
-    };
-    sellsArray.push(goldItem);
-    
+      name: 'Золото',
+    });
+
     setResourcesPlSells(sellsArray);
 
     const filteredOffMarket = marketResources.off_market.filter(matchCountry);
@@ -381,8 +210,8 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
       filteredOffMarket.map(item => ({
         identificator: item.identificator,
         count: null,
-        name: item.name
-      }))
+        name: item.name,
+      })),
     );
   }, [marketResources.to_market, marketResources.off_market]);
 
@@ -396,19 +225,19 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     }
   }, [selectedCountry, showMarketForm, isGameArtel, updateResourcesArrays]);
 
-  // Вспомогательные функции для UI (до обработчиков, чтобы избежать проблем с порядком)
+  // Вспомогательные функции для UI
   const getRobberyProbability = useCallback((guildId: number): string => {
-    const prob = guildRobberyProbabilities[guildId];
+    const prob = robbery.probabilities[guildId];
     if (!prob || prob.probability === 0) return 'Защищена';
     return `${(prob.probability * 100).toFixed(1)}%`;
-  }, [guildRobberyProbabilities]);
+  }, [robbery.probabilities]);
 
   const hasEmbargo = useCallback((country: Country): boolean => {
     return (country.params?.embargo || 0) > 0;
   }, []);
 
   const getImagesBaseUrl = useCallback((): string => {
-    const base = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '');
+    const base = (CONFIG.BACKEND_URL || ApiService.getBaseUrl()).replace(/\/+$/, '');
     return base.replace(/\/backend$/i, '');
   }, []);
 
@@ -431,9 +260,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
       return '';
     }
     const encodedFlagName = encodeURIComponent(cleanFlagName);
-    const url = `${getImagesBaseUrl()}/images/countries/${encodedFlagName}.png`;
-    console.log('Country flag URL:', country.name, flagName, '->', url);
-    return url;
+    return `${getImagesBaseUrl()}/images/countries/${encodedFlagName}.png`;
   }, [getImagesBaseUrl]);
 
   // Обработчики для рынка
@@ -445,6 +272,27 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     setTotalSaleIncome(0);
     setContrabandConfirmed(false);
   }, []);
+
+  /**
+   * Полное обновление данных рынка (кнопка «Обновить цены»).
+   * Кнопка активна всегда (гейт newRelations снят), запросы уходят через слой.
+   */
+  const handleLoadMarketData = useCallback(async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        queryClient.refetch([queryKeys.guilds()], { force: true }),
+        queryClient.refetch([queryKeys.countries()], { force: true }),
+        queryClient.refetch([queryKeys.prices()], { force: true }),
+      ]);
+      await robbery.refetch();
+      watch.acknowledge();
+    } catch (error: any) {
+      console.error('Ошибка обновления данных рынка:', getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }, [robbery, watch]);
 
   const handleSelectGuildForMarket = useCallback((guildId: number) => {
     setSelectedMarketGuild(guildId);
@@ -465,8 +313,9 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     setIsCarProtected(false);
     setContrabandConfirmed(false);
     handleResetMarketForm();
-    loadRobberyProbabilitiesForGuilds(marketGuilds);
-  }, [marketGuilds, loadRobberyProbabilitiesForGuilds, handleResetMarketForm]);
+    // Вероятности ограбления могли измениться, пока считали караван — обновляем через слой.
+    void robbery.refetch();
+  }, [robbery, handleResetMarketForm]);
 
   const handleCalculateCaravan = useCallback(() => {
     const effectiveCountryId = isGameArtel ? null : selectedCountry;
@@ -517,7 +366,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
       }
 
     } catch (error: any) {
-      Alert.alert('Ошибка расчета', error.message);
+      Alert.alert('Ошибка расчета', getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -539,10 +388,10 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
       Alert.alert('Недостаточно золота', `Не хватает ${shortage} золота для покупки`);
       return;
     }
-    handleRegisterCaravan();
+    handleRegisterCaravanRef.current();
   }, [isEmbargoActiveForSelected, contrabandConfirmed, resourcesPlSells, totalPurchaseCost, totalSaleIncome]);
 
-  const handleRegisterCaravan = useCallback(async () => {
+  const handleRegisterCaravanInternal = useCallback(async () => {
     const effectiveCountryId = isGameArtel ? null : selectedCountry;
     if ((effectiveCountryId == null && !isGameArtel) || selectedMarketGuild == null) {
       Alert.alert('Ошибка', isGameArtel ? 'Выберите гильдию' : 'Выберите страну и гильдию');
@@ -557,6 +406,27 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     setCaravanPending(true);
 
     try {
+      // Д7: перед регистрацией принудительно обновляем цены и, если итоговые цифры
+      // разошлись с уже посчитанными, показываем расхождение и требуем пересчёта.
+      const fresh = await refreshPricesNow();
+      if (fresh?.prices) {
+        CaravanService.setResources(fresh.prices);
+        const recount = CaravanService.calculateCaravan(effectiveCountryId, resourcesPlSells, resourcesPlBuys);
+        const diverged =
+          recount.total_purchase_cost !== totalPurchaseCost || recount.total_sale_income !== totalSaleIncome;
+
+        if (diverged) {
+          Alert.alert(
+            'Цены изменились',
+            `На сервере другие цены: покупка ${recount.total_purchase_cost}, продажа ${recount.total_sale_income}. ` +
+              `На экране было: покупка ${totalPurchaseCost}, продажа ${totalSaleIncome}. ` +
+              'Нажмите «Посчитать» заново — регистрация отменена.',
+            [{ text: 'Понятно' }],
+          );
+          return;
+        }
+      }
+
       // Обогащаем incoming данными
       const enrichedIncoming = resourcesPlSells
         .filter(item => item.count && item.count > 0 && item.identificator !== 'gold')
@@ -569,7 +439,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
             identificator: item.identificator || '',
             name: item.name || resource?.name || '',
             count: Number(item.count),
-            current_sell_price: resource?.sell_price
+            current_sell_price: resource?.sell_price,
           };
         });
 
@@ -584,7 +454,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
             identificator: item.identificator,
             name: item.name,
             count: item.count,
-            current_buy_price: resource?.buy_price || 0
+            current_buy_price: resource?.buy_price || 0,
           };
         });
 
@@ -596,24 +466,24 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
         purchase_cost: totalPurchaseCost,
         sale_income: totalSaleIncome,
         via_vyatka: viaVyatka,
-        is_protected: isCarProtected
+        is_protected: isCarProtected,
       };
 
       const response = await ApiService.registerCaravan(request);
 
       if (response.robbed) {
         Alert.alert('Караван ограблен', 'Караван был ограблен в пути');
-        handleBackToGuildSelection();
+        handleBackToGuildSelectionRef.current();
       } else {
         Alert.alert('Успех', 'Караван успешно зарегистрирован!');
-        handleBackToGuildSelection();
+        handleBackToGuildSelectionRef.current();
       }
     } catch (error: any) {
-      if (error.robbed) {
+      if (error?.robbed) {
         Alert.alert('Караван ограблен', error.error || 'Караван был ограблен в пути');
-        handleBackToGuildSelection();
+        handleBackToGuildSelectionRef.current();
       } else {
-        Alert.alert('Ошибка', error.message || 'Ошибка регистрации каравана');
+        Alert.alert('Ошибка', getErrorMessage(error, 'Ошибка регистрации каравана'));
       }
     } finally {
       setLoading(false);
@@ -621,10 +491,17 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     }
   }, [
     isGameArtel, selectedCountry, selectedMarketGuild, isEmbargoActiveForSelected,
-    contrabandConfirmed, resourcesPlSells, resToPlayer, marketResources,
+    contrabandConfirmed, resourcesPlSells, resourcesPlBuys, resToPlayer, marketResources,
     totalPurchaseCost, totalSaleIncome, viaVyatka, isCarProtected,
-    handleBackToGuildSelection
   ]);
+
+  // Ссылки для взаимных вызовов обработчиков (без пересоздания useCallback по кругу)
+  const handleRegisterCaravanRef = useRef(handleRegisterCaravanInternal);
+  handleRegisterCaravanRef.current = handleRegisterCaravanInternal;
+  const handleBackToGuildSelectionRef = useRef(handleBackToGuildSelection);
+  handleBackToGuildSelectionRef.current = handleBackToGuildSelection;
+
+  const initialLoading = guildsQuery.isLoading || countriesQuery.isLoading || pricesQuery.isLoading;
 
   return {
     // State
@@ -638,7 +515,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     showMarketForm,
     viaVyatka,
     isCarProtected,
-    guildRobberyProbabilities,
+    guildRobberyProbabilities: robbery.probabilities,
     resToPlayer,
     totalPurchaseCost,
     totalSaleIncome,
@@ -646,6 +523,11 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     newRelations,
     contrabandConfirmed,
     loading,
+    initialLoading,
+    refreshing: guildsQuery.isFetching || countriesQuery.isFetching || pricesQuery.isFetching,
+    pricesChanged,
+    isOffline: countriesQuery.isOffline || pricesQuery.isOffline || guildsQuery.isOffline,
+    updatedAt: countriesQuery.updatedAt,
     isGameArtel,
     isEmbargoActiveForSelected,
 
@@ -654,7 +536,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     handleBackToGuildSelection,
     handleCalculateCaravan,
     handleShowConfirmDialog,
-    handleRegisterCaravan,
+    handleRegisterCaravan: handleRegisterCaravanInternal,
     handleResetMarketForm,
     handleLoadMarketData,
     setViaVyatka,

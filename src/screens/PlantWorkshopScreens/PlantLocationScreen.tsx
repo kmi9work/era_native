@@ -8,7 +8,6 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navigation/native';
-import ResourceItem from '../../screens/ResourceItem';
 import PlantCostBlock from '../../screens/components/PlantCostBlock';
 import { usePlantBuilding } from '../hooks/usePlantBuilding';
 

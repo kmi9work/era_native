@@ -95,3 +95,40 @@ To learn more about React Native, take a look at the following resources:
 - [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
 - [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
 - [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+
+# Единый слой загрузки данных (`src/data`)
+
+Все игровые данные (гильдии, предприятия, справочники, страны, цены, вероятности ограбления)
+клиент получает через один слой в `src/data/`. Описание задачи — `docs/data-refresh/TZ-edinyy-sloy-dannyh.md`.
+
+Как это работает:
+
+- **Ключ = набор данных.** Фабрика ключей — `src/data/keys.ts` (`['guilds']`, `['guild', id, 'plants']`,
+  `['plant', id]`, `['plantLevels']`, `['resources']`, `['availablePlaces']`, `['countries']`,
+  `['prices']`, `['robbery', id]`).
+- **Кэш только в памяти, без персиста** (`src/data/queryClient.ts`), показ по схеме
+  stale-while-revalidate: кэшированные данные показываются сразу, обновление идёт в фоне,
+  ошибка не стирает последние успешные данные.
+- **Опрос — один таймер на ключ и только пока экран в фокусе.** Интервалы и TTL заданы
+  в прикладных хуках `src/data/hooks/*`, а не в экранах. При ошибках интервал растёт
+  (backoff до 5 минут), добавлен jitter 10 %.
+- **`useRefetchOnFocus(keys)`** — единственная точка refetch-on-focus (`useFocusEffect`).
+  Каждый экран перечисляет свои ключи.
+- **Мутации не перезагружают всё:** `useMutation` + `queryClient.invalidate(keys)` /
+  `invalidatePrefix(['guild'])` точечно помечают устаревшие ключи.
+- **Ошибки нормализованы** в `ApiError { kind: 'network' | 'timeout' | 'http' }`
+  (`src/data/apiErrors.ts`); сетевые сбои показываются признаком «нет связи»
+  (`DataFreshnessBadge`), без `Alert` на каждый опрос.
+
+Прикладное использование:
+
+```ts
+const guilds = useGuilds();                     // { data, isLoading, isFetching, updatedAt, isOffline, refetch }
+useRefetchOnFocus([queryKeys.guilds()]);        // обновить при возврате на экран
+queryClient.refetch([queryKeys.prices()], { force: true }); // принудительно, в обход TTL
+```
+
+Тесты слоя: `npx jest __tests__/data` (TTL и свежесть, дедупликация, отмена, «последний
+стартовавший побеждает», точечная инвалидация, backoff, SWR-показ, refetch-on-focus,
+нормализация ошибок).
+

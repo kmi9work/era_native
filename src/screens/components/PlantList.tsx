@@ -4,6 +4,7 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
+  RefreshControl,
   StyleSheet,
 } from 'react-native';
 import { EnterpriseData } from '../hooks/useEnterpriseManagement';
@@ -13,6 +14,9 @@ interface PlantListProps {
   onSelectPlant: (plant: EnterpriseData) => void;
   onDeletePlant?: (plant: EnterpriseData) => void;
   loading?: boolean;
+  /** pull-to-refresh (данные экрана приходят из слоя) */
+  refreshing?: boolean;
+  onRefresh?: () => void;
 }
 
 /**
@@ -24,6 +28,8 @@ export default function PlantList({
   onSelectPlant,
   onDeletePlant,
   loading = false,
+  refreshing = false,
+  onRefresh,
 }: PlantListProps) {
   if (loading) {
     return (
@@ -44,7 +50,12 @@ export default function PlantList({
   return (
     <View style={styles.container}>
       <Text style={styles.sectionTitle}>Мои предприятия:</Text>
-      <ScrollView style={styles.list}>
+      <ScrollView
+        style={styles.list}
+        refreshControl={
+          onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined
+        }
+      >
         {plants.map((plant) => (
           <View key={plant.id} style={styles.itemContainer}>
             <TouchableOpacity

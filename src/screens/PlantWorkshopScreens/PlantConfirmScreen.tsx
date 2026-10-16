@@ -3,16 +3,15 @@ import {
   View,
   Text,
   TouchableOpacity,
-  ActivityIndicator,
   StyleSheet,
   Alert,
 } from 'react-native';
 import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navigation/native';
-import { Alert as AlertLib } from 'react-native';
 import { BrotherPrinterService } from '../../services/BrotherPrinterService';
 import ApiService from '../../services/api';
 import PlantCostBlock from '../../screens/components/PlantCostBlock';
-import { gameConfig } from '../../config/game';
+import { queryKeys } from '../../data/keys';
+import { queryClient } from '../../data/queryClient';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -48,7 +47,6 @@ export default function PlantConfirmScreen() {
   console.log('[DEBUG] PlantConfirmScreen: firstLevel type=', typeof firstLevel);
 
   const [loading, setLoading] = useState(false);
-  const isGameArtel = gameConfig.isActive('artel');
 
   const handleBuildPlant = async () => {
     if (!place) {
@@ -76,6 +74,11 @@ export default function PlantConfirmScreen() {
       if (!plantData || typeof plantData.id === 'undefined') {
         throw new Error('Не удалось получить ID созданного предприятия');
       }
+
+      // Точечная инвалидация: новое предприятие меняет список предприятий гильдии
+      // и свободные места; остальные данные (цены, страны) не трогаем.
+      queryClient.invalidatePrefix(['guild']);
+      queryClient.invalidate([queryKeys.availablePlaces()]);
 
       const regionName = place.name || 'Неизвестный регион';
 
@@ -118,6 +121,9 @@ export default function PlantConfirmScreen() {
               onPress: async () => {
                 try {
                   await ApiService.deletePlant(plantData.id);
+                  // Предприятие откатили — список гильдии и места снова устарели.
+                  queryClient.invalidatePrefix(['guild']);
+                  queryClient.invalidate([queryKeys.availablePlaces()]);
                 } catch (deleteError: any) {
                   // ignore
                 }

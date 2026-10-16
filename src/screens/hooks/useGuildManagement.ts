@@ -1,47 +1,62 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Alert } from 'react-native';
-import ApiService from '../../services/api';
+import { useCallback, useMemo, useState } from 'react';
+import { useGuilds } from '../../data/hooks/useGuilds';
+import { queryKeys } from '../../data/keys';
+import { queryClient } from '../../data/queryClient';
 import { Guild } from '../../types';
 
 /**
  * Хук для управления гильдиями.
- * Загружает список гильдий и управляет выбранной гильдией.
+ * Данные берутся из слоя (ключ ['guilds']): TTL 60 с, обновление в фоне, refetch-on-focus
+ * выполняет экран. Наружу — те же поля и функции, что были до перехода на слой.
  */
 export interface GuildManagementState {
   guilds: Guild[];
   selectedGuild: Guild | null;
   loading: boolean;
+  /** идёт любое обновление (в том числе фоновое) */
+  refreshing: boolean;
+  /** нет связи — показаны последние полученные данные */
+  isOffline: boolean;
+  /** данные устарели по TTL/инвалидации */
+  isStale: boolean;
+  updatedAt: number | undefined;
+  error: unknown;
 }
 
 export function useGuildManagement() {
-  const [state, setState] = useState<GuildManagementState>({
-    guilds: [],
-    selectedGuild: null,
-    loading: false,
-  });
+  const query = useGuilds();
+  const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
 
-  const loadGuilds = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true }));
-    try {
-      const data = await ApiService.getGuilds();
-      const sortedData = data.sort((a, b) => a.id - b.id);
-      setState((prev) => ({ ...prev, guilds: sortedData, loading: false }));
-    } catch (error: any) {
-      Alert.alert('Ошибка', error.message);
-      setState((prev) => ({ ...prev, loading: false }));
-    }
-  }, []);
+  const guilds = useMemo(
+    () => [...((query.data as Guild[]) ?? [])].sort((a, b) => a.id - b.id),
+    [query.data],
+  );
+
+  /** Ручное обновление (pull-to-refresh, кнопка). Ошибки не алертятся: признак «нет связи» в бейдже. */
+  const loadGuilds = useCallback(
+    () => queryClient.refetch([queryKeys.guilds()], { force: true }),
+    [],
+  );
 
   const selectGuild = useCallback((guild: Guild) => {
-    setState((prev) => ({ ...prev, selectedGuild: guild }));
+    setSelectedGuild(guild);
   }, []);
 
   const clearSelectedGuild = useCallback(() => {
-    setState((prev) => ({ ...prev, selectedGuild: null }));
+    setSelectedGuild(null);
   }, []);
 
   return {
-    state,
+    state: {
+      guilds,
+      selectedGuild,
+      loading: query.isLoading,
+      refreshing: query.isFetching,
+      isOffline: query.isOffline,
+      isStale: query.isStale,
+      updatedAt: query.updatedAt,
+      error: query.error,
+    },
     loadGuilds,
     selectGuild,
     clearSelectedGuild,

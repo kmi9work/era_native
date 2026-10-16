@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,9 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navigation/native';
 import { usePlantBuilding } from '../hooks/usePlantBuilding';
+import DataFreshnessBadge from '../../components/DataFreshnessBadge';
+import { queryKeys } from '../../data/keys';
+import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -40,13 +43,12 @@ export default function NewPlantTypeScreen() {
     setFilterCategoryId,
     plantCategories,
     getFilteredPlantTypes,
-    loadAvailablePlaces,
     selectPlantType,
   } = usePlantBuilding();
 
-  useEffect(() => {
-    loadAvailablePlaces();
-  }, [loadAvailablePlaces]);
+  // Доступные места и справочник уровней обновляются при возврате на экран;
+  // пока экран в фокусе, справочник уровней опрашивается раз в 60 с (ключи из слоя).
+  useRefetchOnFocus([queryKeys.availablePlaces(), queryKeys.plantLevels()]);
 
   const filteredPlants = getFilteredPlantTypes();
 
@@ -71,6 +73,10 @@ export default function NewPlantTypeScreen() {
   return (
     <View style={styles.content}>
       <Text style={styles.stepTitle}>Выберите тип предприятия</Text>
+
+      <View style={styles.statusRow}>
+        <DataFreshnessBadge keys={[queryKeys.availablePlaces(), queryKeys.plantLevels()]} />
+      </View>
 
       {/* Фильтры по категориям */}
       <View style={styles.filterContainer}>
@@ -232,5 +238,8 @@ const styles = StyleSheet.create({
     color: '#d32f2f',
     fontSize: 13,
     fontWeight: '600',
+  },
+  statusRow: {
+    marginBottom: 12,
   },
 });

@@ -22,7 +22,6 @@ interface ProcessingMultiContentProps {
 }
 
 const ProcessingMultiContent: React.FC<ProcessingMultiContentProps> = ({
-  loading,
   entries,
   totals,
   helpers,

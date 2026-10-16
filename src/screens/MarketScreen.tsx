@@ -11,17 +11,22 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useMarketScreenLogic } from './hooks/useMarketScreenLogic';
-import ResourceItem from './ResourceItem';
 import ScannerStatusBadge from '../components/ScannerStatusBadge';
+import DataFreshnessBadge from '../components/DataFreshnessBadge';
+import { queryKeys } from '../data/keys';
+import { useRefetchOnFocus } from '../data/useRefetchOnFocus';
 
 // Navigation prop приходит автоматически от React Navigation
 const MarketScreen = () => {
   const navigation = useNavigation();
   const logic = useMarketScreenLogic();
 
+  // Refetch-on-focus: при возврате на рынок данные обновляются сами (Д5),
+  // опрос цен/стран при этом идёт только пока экран в фокусе (Д4).
+  useRefetchOnFocus([queryKeys.guilds(), queryKeys.countries(), queryKeys.prices()]);
+
   const {
     marketGuilds,
-    selectedMarketGuild,
     countries,
     selectedCountry,
     marketResources,
@@ -36,10 +41,10 @@ const MarketScreen = () => {
     totalSaleIncome,
     caravanPending,
     newRelations,
-    contrabandConfirmed,
+    pricesChanged,
     loading,
+    initialLoading,
     isGameArtel,
-    isEmbargoActiveForSelected,
     handleSelectGuildForMarket,
     handleBackToGuildSelection,
     handleCalculateCaravan,
@@ -48,7 +53,6 @@ const MarketScreen = () => {
     handleLoadMarketData,
     setViaVyatka,
     setIsCarProtected,
-    setContrabandConfirmed,
     setSelectedCountry,
     setResourcesPlSells,
     setResourcesPlBuys,
@@ -88,9 +92,8 @@ const MarketScreen = () => {
       } else if (selectedCountry != null) {
         updateResourcesArrays(selectedCountry);
       }
-      // newRelations будет установлен внутри handleLoadMarketData
     } catch (error: any) {
-      // ignore
+      // ошибки показывает слой: бейдж «нет связи», без Alert-спама
     }
   };
 
@@ -104,11 +107,15 @@ const MarketScreen = () => {
           </TouchableOpacity>
           <Text style={styles.title}>Рынок</Text>
           <View style={styles.headerRight}>
+            <DataFreshnessBadge
+              keys={[queryKeys.guilds(), queryKeys.countries(), queryKeys.prices()]}
+              style={styles.headerBadge}
+            />
             <ScannerStatusBadge style={styles.headerBadge} />
           </View>
         </View>
 
-        {loading && !showMarketForm && marketGuilds.length === 0 ? (
+        {initialLoading && marketGuilds.length === 0 ? (
           <View style={styles.content}>
             <ActivityIndicator size="large" color="#1976d2" />
           </View>
@@ -189,6 +196,10 @@ const MarketScreen = () => {
         </TouchableOpacity>
         <Text style={styles.title}>Рынок</Text>
         <View style={styles.headerRight}>
+          <DataFreshnessBadge
+            keys={[queryKeys.guilds(), queryKeys.countries(), queryKeys.prices()]}
+            style={styles.headerBadge}
+          />
           <ScannerStatusBadge style={styles.headerBadge} />
         </View>
       </View>
@@ -334,12 +345,12 @@ const MarketScreen = () => {
             </Text>
           </TouchableOpacity>
 
+          {/* Гейт newRelations снят: кнопка активна всегда (ТЗ § 5, открытый вопрос 3) */}
           <TouchableOpacity
             style={[styles.primaryButton, styles.secondaryButton]}
             onPress={handleRefreshPrices}
-            disabled={!newRelations}
           >
-            <Text style={[styles.secondaryButtonText, !newRelations && { opacity: 0.6 }]}>
+            <Text style={styles.secondaryButtonText}>
               Обновить цены
             </Text>
           </TouchableOpacity>
@@ -351,6 +362,17 @@ const MarketScreen = () => {
             <Text style={styles.primaryButtonText}>Очистить</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Признаки изменения данных на сервере (Д7) */}
+        {(newRelations || pricesChanged) && (
+          <View style={styles.changeNotice}>
+            <Text style={styles.changeNoticeText}>
+              {newRelations ? 'Отношения стран изменились — обновите цены.' : ''}
+              {newRelations && pricesChanged ? ' ' : ''}
+              {pricesChanged ? 'Цены изменились — посчитайте караван заново.' : ''}
+            </Text>
+          </View>
+        )}
 
         {/* Результаты */}
         {resToPlayer.length > 0 && (
@@ -715,6 +737,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#1976d2',
+  },
+  changeNotice: {
+    marginBottom: 15,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#fff3e0',
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9800',
+  },
+  changeNoticeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#e65100',
   },
 });
 

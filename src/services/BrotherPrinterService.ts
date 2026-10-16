@@ -28,11 +28,10 @@ export class BrotherPrinterService {
    * @param regionName Название региона
    * @param options Опции отображения штрихкода
    */
-  static async printBarcode(plantId: number, guildName: string, regionName: string, options?: BarcodeDisplayOptions): Promise<PrintResult> {
+  static async printBarcode(plantId: number, guildName: string, regionName: string, _options?: BarcodeDisplayOptions): Promise<PrintResult> {
     try {
       const printerIp = await PrinterSettings.getPrinterIp();
-      const formattedId = plantId.toString().padStart(9, '0');
-      
+
       if (!BrotherPrinterModule) {
         throw new Error('Нативный модуль Brother Printer недоступен. Убедитесь, что Development Build содержит Brother SDK.');
       }
@@ -158,7 +157,7 @@ export class BrotherPrinterService {
   /**
    * Симуляция печати для тестирования
    */
-  private static async simulatePrint(formattedId: string): Promise<void> {
+  private static async simulatePrint(_formattedId: string): Promise<void> {
     // Симуляция времени печати
     await new Promise(resolve => setTimeout(resolve, 2000));
     return;
@@ -167,7 +166,7 @@ export class BrotherPrinterService {
   /**
    * Симуляция проверки подключения
    */
-  private static async simulateConnectionTest(ip: string): Promise<void> {
+  private static async simulateConnectionTest(_ip: string): Promise<void> {
     // Симуляция времени проверки
     await new Promise(resolve => setTimeout(resolve, 1000));
     return;

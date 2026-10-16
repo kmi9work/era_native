@@ -1,15 +1,19 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  RefreshControl,
   StyleSheet,
 } from 'react-native';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { useBarcodeScannerContext } from '../../context/BarcodeScannerContext';
 import { useGuildManagement } from '../hooks/useGuildManagement';
+import DataFreshnessBadge from '../../components/DataFreshnessBadge';
+import { queryKeys } from '../../data/keys';
+import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -36,9 +40,18 @@ export default function GuildSelectionScreen() {
   const { state, loadGuilds, selectGuild } = useGuildManagement();
   const { addListener } = useBarcodeScannerContext();
   const lastHandledBarcodeRef = useRef<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadGuilds();
+  // Возврат на этот экран (из списка предприятий, из штрихкод-флоу) обновляет список гильдий.
+  useRefetchOnFocus([queryKeys.guilds()]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadGuilds();
+    } finally {
+      setRefreshing(false);
+    }
   }, [loadGuilds]);
 
   // Регистрируем listener для сканирования штрихкодов
@@ -91,10 +104,23 @@ export default function GuildSelectionScreen() {
         </Text>
       </View>
 
+      <View style={styles.statusRow}>
+        <DataFreshnessBadge keys={[queryKeys.guilds()]} />
+      </View>
+
       {state.loading ? (
         <ActivityIndicator size="large" color="#1976d2" />
       ) : (
-        <ScrollView>
+        <ScrollView
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+        >
+          {state.guilds.length === 0 && (
+            <Text style={styles.emptyText}>
+              {state.isOffline
+                ? 'Нет связи с сервером. Показаны последние полученные данные (их нет).'
+                : 'Список гильдий пуст.'}
+            </Text>
+          )}
           {state.guilds.map((guild) => (
             <TouchableOpacity
               key={guild.id}
@@ -169,5 +195,13 @@ const styles = StyleSheet.create({
   itemButtonArrow: {
     fontSize: 24,
     color: '#999',
+  },
+  statusRow: {
+    marginBottom: 10,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#666',
+    paddingVertical: 12,
   },
 });

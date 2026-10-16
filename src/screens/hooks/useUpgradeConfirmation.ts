@@ -1,13 +1,20 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
-import ApiService from '../../services/api';
+import { getErrorMessage } from '../../data/apiErrors';
+import { loadPlant, usePlant } from '../../data/hooks/usePlant';
+import { ensurePlantLevels, getCachedPlantLevelsForType, usePlantLevels } from '../../data/hooks/usePlantLevels';
+import { queryKeys } from '../../data/keys';
+import { queryClient } from '../../data/queryClient';
+import { useMutation } from '../../data/useMutation';
 import { BrotherPrinterService } from '../../services/BrotherPrinterService';
+import ApiService from '../../services/api';
 import { usePlantProcessingLogic } from './usePlantProcessingLogic';
 
 /**
  * Хук для подтверждения улучшения предприятия.
- * Загружает данные предприятия, стоимость улучшения,
- * выполняет улучшение и перепечатку штрихкода.
+ * Предприятие — ключ ['plant', id] (TTL 0, всегда свежее, фоновая перерисовка не мешает вводу),
+ * стоимость уровня — из кэша ['plantLevels'], после upgrade/downgrade инвалидируются только
+ * затронутые ключи (Д9/§ 5 правило 4).
  */
 export interface UpgradeConfirmationState {
   plantInfo: any | null;
@@ -24,103 +31,137 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     selectedPlantForUpgrade: null,
   });
 
+  const [plantId, setPlantId] = useState<number | null>(null);
+  const plantQuery = usePlant(plantId);
+  usePlantLevels();
+
   const processing = usePlantProcessingLogic();
   const plantIdRef = useRef<number | null>(null);
+  // Ссылка на изменяемые зависимости, чтобы loadPlantForUpgrade остался стабильным
+  // (иначе эффект экрана с ним в deps зацикливается).
+  const processingRef = useRef(processing);
+  processingRef.current = processing;
 
-  const loadPlantForUpgrade = useCallback(async (plantId: number) => {
+  /** Собирает состояние карточки из свежих данных предприятия и справочника уровней. */
+  const applyPlantData = useCallback((data: any) => {
+    if (!data) return;
+    const plantTypeId = data.plant_level?.plant_type?.id;
+    const currentLevel = data.plant_level?.level || 1;
+
+    const levels = plantTypeId ? getCachedPlantLevelsForType(plantTypeId) : [];
+    const nextLevel = levels.find((l: any) => l.level === currentLevel + 1);
+
+    setState({
+      plantInfo: data,
+      upgradeCost: nextLevel?.price || null,
+      isMaxLevel: plantTypeId ? !nextLevel : false,
+      selectedPlantForUpgrade: data,
+    });
+  }, []);
+
+  // Экран обновляется сам, когда слой отдаёт новые данные (фокус, опрос, своя мутация).
+  useEffect(() => {
+    if (plantQuery.data) applyPlantData(plantQuery.data);
+  }, [plantQuery.data, applyPlantData]);
+
+  const loadPlantForUpgrade = useCallback(async (id: number) => {
+    plantIdRef.current = id;
+    setPlantId(id);
+
     try {
-      plantIdRef.current = plantId;
-      const data = await ApiService.getPlant(plantId);
+      await ensurePlantLevels();
+      const data = await loadPlant(id);
 
       if (!data || !data.economic_subject_id) {
         Alert.alert('Ошибка', 'Не удалось загрузить данные предприятия');
         return;
       }
 
-      const plantTypeId = data.plant_level?.plant_type?.id;
-      const currentLevel = data.plant_level?.level || 1;
-
-      if (!plantTypeId) {
+      if (!data.plant_level?.plant_type?.id) {
         Alert.alert('Ошибка', 'Не удалось определить тип предприятия');
         return;
       }
 
-      const levels = await ApiService.getPlantLevels(plantTypeId);
-      const nextLevel = levels.find((l: any) => l.level === currentLevel + 1);
+      applyPlantData(data);
 
-      setState({
-        plantInfo: data,
-        upgradeCost: nextLevel?.price || null,
-        isMaxLevel: !nextLevel,
-        selectedPlantForUpgrade: data,
-      });
-
-      // Загружаем данные для расчёта переработки/добычи
+      // Данные для расчёта переработки/добычи
       try {
-        await processing.loadPlant(plantId);
+        await processingRef.current.loadPlant(id);
       } catch (processingError) {
         console.error('[useUpgradeConfirmation] Processing load error:', processingError);
       }
     } catch (error: any) {
-      Alert.alert('Ошибка', error.message || 'Не удалось загрузить данные предприятия');
+      Alert.alert('Ошибка', getErrorMessage(error, 'Не удалось загрузить данные предприятия'));
     }
-  }, [processing]);
+  }, [applyPlantData]);
+
+  const upgradeMutation = useMutation<[number], any>(
+    (id: number) => ApiService.upgradePlant(id),
+    {
+      invalidate: (_result, id) => [queryKeys.plant(id), queryKeys.plantLevels(), queryKeys.availablePlaces()],
+      onError: (error) => Alert.alert('Ошибка', getErrorMessage(error)),
+    },
+  );
+
+  const downgradeMutation = useMutation<[number], any>(
+    (id: number) => ApiService.downgradePlant(id),
+    {
+      invalidate: (_result, id) => [queryKeys.plant(id), queryKeys.plantLevels(), queryKeys.availablePlaces()],
+      onError: (error) => Alert.alert('Ошибка', getErrorMessage(error)),
+    },
+  );
 
   const performUpgrade = useCallback(async (): Promise<boolean> => {
-    if (!state.selectedPlantForUpgrade?.id) {
+    const id = plantIdRef.current ?? state.selectedPlantForUpgrade?.id;
+    if (!id) {
       Alert.alert('Ошибка', 'Предприятие не выбрано');
       return false;
     }
 
-    try {
-      const result = await ApiService.upgradePlant(state.selectedPlantForUpgrade.id);
-      Alert.alert('Успех', result.msg || 'Предприятие успешно улучшено!');
+    const result = await upgradeMutation.mutate(id);
+    if (!result) return false;
 
-      // Сброс состояния
-      setState({
-        plantInfo: null,
-        upgradeCost: null,
-        isMaxLevel: false,
-        selectedPlantForUpgrade: null,
-      });
-      processing.reset();
+    Alert.alert('Успех', result.msg || 'Предприятие успешно улучшено!');
 
-      if (onComplete) {
-        onComplete();
-      }
-      return true;
-    } catch (error: any) {
-      Alert.alert('Ошибка', error.message);
-      return false;
-    }
-  }, [state.selectedPlantForUpgrade, onComplete, processing]);
+    // Уровень предприятия меняется во всех списках гильдий — инвалидируем по префиксу.
+    queryClient.invalidatePrefix(['guild']);
+
+    setState({
+      plantInfo: null,
+      upgradeCost: null,
+      isMaxLevel: false,
+      selectedPlantForUpgrade: null,
+    });
+    processing.reset();
+
+    if (onComplete) onComplete();
+    return true;
+  }, [state.selectedPlantForUpgrade, upgradeMutation, processing, onComplete]);
 
   const performDowngrade = useCallback(async (): Promise<boolean> => {
-    const plantId = state.selectedPlantForUpgrade?.id || plantIdRef.current;
-    if (!plantId) {
+    const id = plantIdRef.current ?? state.selectedPlantForUpgrade?.id;
+    if (!id) {
       Alert.alert('Ошибка', 'Предприятие не выбрано');
       return false;
     }
 
-    try {
-      const result = await ApiService.downgradePlant(plantId);
-      Alert.alert('Успех', result.msg || 'Уровень предприятия уменьшен!');
+    const result = await downgradeMutation.mutate(id);
+    if (!result) return false;
 
-      // Перезагружаем данные предприятия
-      await loadPlantForUpgrade(plantId);
-      return true;
-    } catch (error: any) {
-      Alert.alert('Ошибка', error.message);
-      return false;
-    }
-  }, [state.selectedPlantForUpgrade, loadPlantForUpgrade]);
+    Alert.alert('Успех', result.msg || 'Уровень предприятия уменьшен!');
+    queryClient.invalidatePrefix(['guild']);
+
+    // Перезагружаем данные предприятия (свежие данные придут через слой)
+    await loadPlantForUpgrade(id);
+    return true;
+  }, [state.selectedPlantForUpgrade, downgradeMutation, loadPlantForUpgrade]);
 
   const reprintBarcode = useCallback(async (
-    plantId?: number,
+    plantIdArg?: number,
     guildName?: string,
     regionName?: string
   ): Promise<boolean> => {
-    const idToUse = plantId || state.selectedPlantForUpgrade?.id;
+    const idToUse = plantIdArg || state.selectedPlantForUpgrade?.id;
     const gName = guildName || state.selectedPlantForUpgrade?.economic_subject?.name || 'Неизвестная гильдия';
     let rName = regionName;
     if (!rName && state.selectedPlantForUpgrade?.plant_place) {
@@ -164,5 +205,8 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     performDowngrade,
     reprintBarcode,
     clearState,
+    // Свежесть карточки предприятия и справочника уровней (для индикации мастеру)
+    plantUpdatedAt: plantQuery.updatedAt,
+    isOffline: plantQuery.isOffline,
   };
 }

@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import ResourceItem from '../ResourceItem';
 import ApiService from '../../services/api';
 import { CONFIG } from '../../config';
+import { useResources } from '../../data/hooks/useResources';
 
 interface PlantCostBlockProps {
   /** Стоимость в формате { resourceIdentificator: amount } */
@@ -15,35 +16,20 @@ interface PlantCostBlockProps {
 
 /**
  * Общий компонент отображения стоимости (строительство / улучшение).
+ * Справочник ресурсов приходит из единого слоя данных (ключ ['resources']).
  */
 export default function PlantCostBlock({
   cost,
   title = 'Стоимость:',
   isMaxLevel = false,
 }: PlantCostBlockProps) {
-  const [resources, setResources] = useState<any[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    if (loaded) return;
-    
-    const loadResources = async () => {
-      try {
-        const data = await ApiService.getAllResources();
-        setResources(data);
-      } catch (error) {
-        // ignore
-      } finally {
-        setLoaded(true);
-      }
-    };
-    loadResources();
-  }, []);
+  const resourcesQuery = useResources();
+  const resources = useMemo(() => (resourcesQuery.data as any[]) ?? [], [resourcesQuery.data]);
 
   const getImagesBaseUrl = useCallback((): string => {
     const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
     if (configuredBase) return configuredBase;
-    const apiBase = (ApiService['api']?.defaults?.baseURL || '').replace(/\/+$/, '');
+    const apiBase = (ApiService.getBaseUrl() || '').replace(/\/+$/, '');
     return apiBase.replace(/\/backend$/i, '');
   }, []);
 

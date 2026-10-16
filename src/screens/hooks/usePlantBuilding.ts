@@ -1,12 +1,16 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Alert } from 'react-native';
-import ApiService from '../../services/api';
+import { getErrorMessage } from '../../data/apiErrors';
+import { useAvailablePlaces } from '../../data/hooks/useAvailablePlaces';
+import { ensurePlantLevels, getCachedPlantLevelsForType, usePlantLevels } from '../../data/hooks/usePlantLevels';
+import { queryKeys } from '../../data/keys';
+import { queryClient } from '../../data/queryClient';
 import { AvailablePlaceInfo, PlantLevel, PlantPlace } from '../../types';
 
 /**
  * Хук для строительства новых предприятий.
- * Управляет загрузкой доступных мест, фильтрацией по категориям,
- * выбором типа предприятия, места и уровня.
+ * Доступные места — ключ ['availablePlaces'] (TTL 60 с, refetch-on-focus),
+ * уровни по типу — выборка из кэша ключа ['plantLevels'] без повторного запроса.
  */
 export interface PlantBuildingState {
   availablePlaces: AvailablePlaceInfo[];
@@ -17,102 +21,109 @@ export interface PlantBuildingState {
 }
 
 export function usePlantBuilding() {
-  const [state, setState] = useState<PlantBuildingState>({
-    availablePlaces: [],
+  const placesQuery = useAvailablePlaces();
+  const levelsQuery = usePlantLevels();
+
+  const [selection, setSelection] = useState<{
+    selectedPlantType: AvailablePlaceInfo | null;
+    selectedPlace: PlantPlace | null;
+    firstLevel: PlantLevel | null;
+  }>({
     selectedPlantType: null,
     selectedPlace: null,
     firstLevel: null,
-    loading: false,
   });
 
   // Фильтр по категории
   const [filterCategoryId, setFilterCategoryId] = useState<number | null>(null);
 
+  const availablePlaces = useMemo(
+    () => ((placesQuery.data as AvailablePlaceInfo[]) ?? []),
+    [placesQuery.data],
+  );
+
   // Уникальные категории из availablePlaces
   const plantCategories = useMemo(() => {
     const seen = new Map<number, string>();
-    state.availablePlaces.forEach(p => {
+    availablePlaces.forEach(p => {
       if (p.plant_category_id != null && p.plant_category != null && !seen.has(p.plant_category_id)) {
         seen.set(p.plant_category_id, p.plant_category);
       }
     });
     return Array.from(seen.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [state.availablePlaces]);
+  }, [availablePlaces]);
 
-  const loadAvailablePlaces = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true }));
-    try {
-      const data = await ApiService.getAvailablePlaces();
-      setState((prev) => ({ ...prev, availablePlaces: data, loading: false }));
-    } catch (error: any) {
-      Alert.alert('Ошибка', error.message);
-      setState((prev) => ({ ...prev, loading: false }));
-    }
-  }, []);
+  /** Ручное обновление списка мест (pull-to-refresh). */
+  const loadAvailablePlaces = useCallback(
+    () => queryClient.refetch([queryKeys.availablePlaces()], { force: true }),
+    [],
+  );
 
   const getFilteredPlantTypes = useCallback(() => {
     const filtered = filterCategoryId == null
-      ? state.availablePlaces
-      : state.availablePlaces.filter(p => p.plant_category_id === filterCategoryId);
+      ? availablePlaces
+      : availablePlaces.filter(p => p.plant_category_id === filterCategoryId);
 
-    return filtered.sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const aAvailable = a.available_places.length > 0 ? 1 : 0;
       const bAvailable = b.available_places.length > 0 ? 1 : 0;
       return bAvailable - aAvailable;
     });
-  }, [state.availablePlaces, filterCategoryId]);
+  }, [availablePlaces, filterCategoryId]);
 
   const selectPlantType = useCallback(async (plantTypeInfo: AvailablePlaceInfo): Promise<PlantLevel | null> => {
-    setState((prev) => ({ ...prev, selectedPlantType: plantTypeInfo, selectedPlace: null }));
-    
+    setSelection({ selectedPlantType: plantTypeInfo, selectedPlace: null, firstLevel: null });
+
     try {
-      const levels = await ApiService.getPlantLevels(plantTypeInfo.plant_type_id);
-      const first = levels.find((l: PlantLevel) => l.level === 1);
-      
-      setState((prev) => ({ ...prev, firstLevel: first || null }));
-      
-      // Если только одно доступное место — выбираем автоматически
-      if (plantTypeInfo.available_places.length === 1) {
-        setState((prev) => ({ ...prev, selectedPlace: plantTypeInfo.available_places[0] }));
-      }
-      
-      return first || null;
+      await ensurePlantLevels();
+      const levels = getCachedPlantLevelsForType(plantTypeInfo.plant_type_id);
+      const first = levels.find((l: PlantLevel) => l.level === 1) || null;
+
+      setSelection(prev => ({
+        ...prev,
+        firstLevel: first,
+        // Если только одно доступное место — выбираем автоматически
+        selectedPlace: plantTypeInfo.available_places.length === 1 ? plantTypeInfo.available_places[0] : null,
+      }));
+
+      return first;
     } catch (error: any) {
-      Alert.alert('Ошибка', error.message);
+      Alert.alert('Ошибка', getErrorMessage(error));
       return null;
     }
   }, []);
 
   const selectPlace = useCallback((place: PlantPlace) => {
-    setState((prev) => ({ ...prev, selectedPlace: place }));
+    setSelection(prev => ({ ...prev, selectedPlace: place }));
   }, []);
 
   const reset = useCallback(() => {
-    setState({
-      availablePlaces: state.availablePlaces,
-      selectedPlantType: null,
-      selectedPlace: null,
-      firstLevel: null,
-      loading: false,
-    });
+    setSelection({ selectedPlantType: null, selectedPlace: null, firstLevel: null });
     setFilterCategoryId(null);
-  }, [state.availablePlaces]);
+  }, []);
 
   const goBack = useCallback(() => {
-    if (state.selectedPlace) {
-      setState((prev) => ({ ...prev, selectedPlace: null }));
-    } else if (state.selectedPlantType) {
-      setState((prev) => ({
-        ...prev,
-        selectedPlantType: null,
-        selectedPlace: null,
-        firstLevel: null,
-      }));
-    }
-  }, [state.selectedPlace, state.selectedPlantType]);
+    setSelection(prev => {
+      if (prev.selectedPlace) return { ...prev, selectedPlace: null };
+      if (prev.selectedPlantType) {
+        return { selectedPlantType: null, selectedPlace: null, firstLevel: null };
+      }
+      return prev;
+    });
+  }, []);
 
   return {
-    state,
+    state: {
+      availablePlaces,
+      selectedPlantType: selection.selectedPlantType,
+      selectedPlace: selection.selectedPlace,
+      firstLevel: selection.firstLevel,
+      loading: placesQuery.isLoading,
+      refreshing: placesQuery.isFetching,
+      isOffline: placesQuery.isOffline,
+      updatedAt: placesQuery.updatedAt,
+      levelsUpdatedAt: levelsQuery.updatedAt,
+    },
     filterCategoryId,
     setFilterCategoryId,
     plantCategories,

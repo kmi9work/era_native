@@ -8,7 +8,7 @@ interface ResourceItemProps {
   imageUrl: string;
 }
 
-const ResourceItem: React.FC<ResourceItemProps> = ({ identificator, name, count, imageUrl }) => {
+const ResourceItem: React.FC<ResourceItemProps> = ({ name, count, imageUrl }) => {
   return (
     <View style={styles.container}>
       <Image 

@@ -28,7 +28,6 @@ interface ProcessingContentProps {
 
 const ProcessingContent: React.FC<ProcessingContentProps> = ({
   step,
-  loading,
   refreshing,
   onRefresh,
   selections,
@@ -40,7 +39,7 @@ const ProcessingContent: React.FC<ProcessingContentProps> = ({
   handlers,
   styles,
 }) => {
-  const { guilds, selectedGuild, guildPlants, selectedPlant } = selections;
+  const { guilds, guildPlants, selectedPlant } = selections;
   const { formulaFrom, formulaTo } = formulas;
   const { inputFrom, inputTo, setInputFromValue, setInputToValue } = inputs;
   const { resultFrom, resultTo, resultChange } = results;

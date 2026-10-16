@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,9 @@ import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navig
 import { Alert } from 'react-native';
 import PlantList from '../../screens/components/PlantList';
 import { useEnterpriseManagement, EnterpriseData } from '../hooks/useEnterpriseManagement';
-
-type RootStackParamList = {
-  Settings: undefined;
-  PlantWorkshop: undefined;
-  Market: undefined;
-};
+import DataFreshnessBadge from '../../components/DataFreshnessBadge';
+import { queryKeys } from '../../data/keys';
+import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -34,8 +31,8 @@ type PlantWorkshopStackParamList = {
 
 /**
  * Экран списка предприятий гильдии.
- * Отображает список предприятий с возможностью выбора, удаления и перехода к созданию нового.
- * Сканер обрабатывается на уровне PlantWorkshopScreen.
+ * Данные — из слоя (ключ ['guild', id, 'plants']), обновляются при возврате на экран
+ * и опросом 30 с, пока экран в фокусе; есть pull-to-refresh.
  */
 export default function EnterpriseListScreen() {
   const navigation = useNavigation<NavigationProp<PlantWorkshopStackParamList>>();
@@ -43,9 +40,18 @@ export default function EnterpriseListScreen() {
   const { guildId, guildName } = route.params as { guildId: number; guildName: string };
 
   const { state, loadGuildPlants, selectPlant, deletePlant } = useEnterpriseManagement();
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadGuildPlants(guildId);
+  // Возврат на список (после улучшения, скана, создания) перечитывает предприятия гильдии.
+  useRefetchOnFocus([queryKeys.guildPlants(guildId)]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadGuildPlants(guildId);
+    } finally {
+      setRefreshing(false);
+    }
   }, [guildId, loadGuildPlants]);
 
   const handleSelectPlant = (plant: EnterpriseData) => {
@@ -62,12 +68,9 @@ export default function EnterpriseListScreen() {
         {
           text: 'Удалить',
           style: 'destructive',
-          onPress: async () => {
-            const success = await deletePlant(plant);
-            if (success) {
-              // Перезагружаем список
-              loadGuildPlants(guildId);
-            }
+          // Перезагрузку списка выполняет слой: мутация deletePlant инвалидирует ключи.
+          onPress: () => {
+            void deletePlant(plant);
           },
         },
       ]
@@ -77,6 +80,10 @@ export default function EnterpriseListScreen() {
   return (
     <View style={styles.content}>
       <Text style={styles.stepTitle}>Предприятия гильдии</Text>
+
+      <View style={styles.statusRow}>
+        <DataFreshnessBadge keys={[queryKeys.guildPlants(guildId)]} />
+      </View>
 
       {state.loading ? (
         <View style={styles.loadingContainer}>
@@ -89,6 +96,8 @@ export default function EnterpriseListScreen() {
           onSelectPlant={handleSelectPlant}
           onDeletePlant={handleDeletePlant}
           loading={false}
+          refreshing={refreshing || state.refreshing}
+          onRefresh={handleRefresh}
         />
       )}
 
@@ -153,5 +162,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     marginTop: 10,
+  },
+  statusRow: {
+    marginBottom: 10,
   },
 });
