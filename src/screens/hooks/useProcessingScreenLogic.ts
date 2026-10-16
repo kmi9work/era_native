@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
-import ApiService from '../../services/api';
+import { getErrorMessage } from '../../data/apiErrors';
+import { fetchGuildPlants } from '../../data/hooks/useGuildPlants';
+import { loadPlant } from '../../data/hooks/usePlant';
+import { ensurePlantLevels, usePlantLevels } from '../../data/hooks/usePlantLevels';
+import { useResources } from '../../data/hooks/useResources';
+import { useGuilds } from '../../data/hooks/useGuilds';
+import { queryKeys } from '../../data/keys';
+import { queryClient } from '../../data/queryClient';
 import { useBarcodeScannerContext } from '../../context/BarcodeScannerContext';
+import ApiService from '../../services/api';
+import { feedToPlant, isTechSchoolsOpen } from '../../services/plantProduction';
 
 // Все уникальные входные ресурсы из всех формул
 const deriveFormulaFrom = (formulas: any[]): any[] => {
@@ -61,7 +70,6 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<any>(null);
 
   const [guildPlants, setGuildPlants] = useState<any[]>([]);
@@ -84,8 +92,17 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     resultChange: [],
   });
 
-  const [allPlantLevels, setAllPlantLevels] = useState<any[]>([]);
-  const [resources, setResources] = useState<any[]>([]);
+  // Справочники — из слоя данных (ключи ['plantLevels'], ['resources'], ['guilds'])
+  const levelsQuery = usePlantLevels();
+  const resourcesQuery = useResources();
+  const guildsQuery = useGuilds();
+
+  const allPlantLevels = useMemo(() => (levelsQuery.data as any[]) ?? [], [levelsQuery.data]);
+  const resources = useMemo(() => (resourcesQuery.data as any[]) ?? [], [resourcesQuery.data]);
+  const guilds = useMemo(
+    () => [...((guildsQuery.data as any[]) ?? [])].sort((a: any, b: any) => a.name.localeCompare(b.name)),
+    [guildsQuery.data],
+  );
 
   const { addListener } = useBarcodeScannerContext();
   const lastHandledBarcodeRef = useRef<string | null>(null);
@@ -95,29 +112,11 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     return isExtractive;
   }, []);
 
-  const loadAllPlantLevels = useCallback(async () => {
-    try {
-      const data = await ApiService.getAllPlantLevels();
-      setAllPlantLevels(data);
-    } catch (error: any) {
-      Alert.alert('Ошибка', error.message || 'Не удалось загрузить уровни предприятий');
-    }
-  }, []);
-
-  const loadResources = useCallback(async () => {
-    try {
-      const data = await ApiService.getAllResources();
-      setResources(data);
-    } catch (error: any) {
-      // ignore
-    }
-  }, []);
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const guildsData = await ApiService.getGuilds();
-      setGuilds(guildsData.sort((a: any, b: any) => a.name.localeCompare(b.name)));
+      // Ручное обновление: тянем список гильдий через слой (force игнорирует TTL)
+      await queryClient.refetch([queryKeys.guilds()], { force: true });
     } catch (error: any) {
       // ignore
     } finally {
@@ -136,69 +135,14 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
   const loadGuilds = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await ApiService.getGuilds();
-      const sortedData = data.sort((a, b) => a.name.localeCompare(b.name));
-      setGuilds(sortedData);
+      // Гильдии приходят из слоя; forced-refetch обновляет кэш ключа ['guilds'].
+      await queryClient.refetch([queryKeys.guilds()], { force: true });
     } catch (error: any) {
-      Alert.alert('Ошибка', error.message);
+      Alert.alert('Ошибка', getErrorMessage(error));
     } finally {
       setLoading(false);
     }
   }, []);
-
-  const resArrayMult = useCallback((resArray: any[], n: number): any[] => {
-    return resArray.map((res) => ({
-      ...res,
-      count: res.count * n,
-    }));
-  }, []);
-
-  const resArraySum = useCallback((array1: any[], array2: any[], sign: number = 1): any[] => {
-    const arr2Copy = JSON.parse(JSON.stringify(array2));
-    for (const res1 of array1) {
-      for (let i = arr2Copy.length - 1; i >= 0; i--) {
-        if (res1.identificator === arr2Copy[i].identificator) {
-          res1.count += arr2Copy[i].count * sign;
-          arr2Copy.splice(i, 1);
-        }
-      }
-    }
-    for (const res of arr2Copy) {
-      array1.push({ ...res, count: res.count * sign });
-    }
-    return array1;
-  }, []);
-
-  const isResArrayLess = useCallback((resArray1: any[], resArray2: any[]): boolean => {
-    for (const res1 of resArray1) {
-      const var2 = resArray2.find((res2: any) => res1.identificator === res2.identificator);
-      if (!var2) return false;
-      if (res1.count > var2.count) return false;
-    }
-    return true;
-  }, []);
-
-  const countRequest = useCallback(
-    (formula: any, request: any[], way: string): { from: any[]; to: any[] } => {
-      let n = 0;
-      let bucket = JSON.parse(JSON.stringify(formula[way]));
-      const formulaPart = formula[way];
-
-      while (
-        isResArrayLess(bucket, request) &&
-        isResArrayLess(resArrayMult(formula.to, n + 1), formula.max_product)
-      ) {
-        bucket = resArraySum(bucket, JSON.parse(JSON.stringify(formulaPart)));
-        n += 1;
-      }
-
-      const to = resArrayMult(formula.to, n);
-      const from = resArrayMult(formula.from, n);
-
-      return { from, to };
-    },
-    [isResArrayLess, resArrayMult, resArraySum],
-  );
 
   const getMaxResourceCount = useCallback(
     (resource: any, isFrom: boolean) => {
@@ -296,14 +240,19 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
   const fetchPlantDetails = useCallback(
     async (plantId: number) => {
-      const data = await ApiService.getPlant(plantId);
+      // Предприятие — всегда свежее, через слой (ключ ['plant', id], TTL 0, отмена предыдущего запроса)
+      const data = await loadPlant(plantId);
 
       if (!data.plant_level) {
         throw new Error('У предприятия нет уровня');
       }
 
       const plantLevelId = data.plant_level.id;
-      const fullPlantLevel = allPlantLevels.find((pl) => pl.id === plantLevelId);
+      // Уровни берём из кэша слоя; если справочник ещё не загружен — догружаем через слой.
+      const cachedLevels = allPlantLevels.find((pl) => pl.id === plantLevelId)
+        ? allPlantLevels
+        : await ensurePlantLevels();
+      const fullPlantLevel = cachedLevels.find((pl) => pl.id === plantLevelId);
 
       if (!fullPlantLevel) {
         throw new Error('Информация об уровне предприятия не найдена');
@@ -386,7 +335,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
           setSelectedGuild(details.guild);
           if (!selectedGuild || selectedGuild.id !== details.guild.id || guildPlants.length === 0) {
             try {
-              const plantsData = await ApiService.getGuildPlants(details.guild.id);
+              const plantsData = await fetchGuildPlants(details.guild.id);
               setGuildPlants(sortGuildPlants(plantsData));
             } catch (plantsError: any) {
               // ignore
@@ -624,29 +573,22 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
           };
         }
 
-        const requestCopy = JSON.parse(JSON.stringify(requestArray));
-        let resultingFrom: any[] = [];
-        let resultingTo: any[] = [];
-
-        formulas.forEach((formula: any) => {
-          const { from, to } = countRequest(formula, requestCopy, 'from');
-          if (from.length > 0) {
-            resArraySum(resultingFrom, from);
-            resArraySum(requestCopy, from, -1);
-          }
-          if (to.length > 0) {
-            resArraySum(resultingTo, to);
-          }
+        // Единый расчёт: последовательный расход сырья + эффект «Технических училищ».
+        const { from, to, change } = feedToPlant(formulas, requestArray, 'from', {
+          techSchoolsOpen: isTechSchoolsOpen(entry.plant?.plant_level),
         });
 
-        aggregatedResultTo = mergeResourceArrays(aggregatedResultTo, normalizeResourceArray(resultingTo));
-        aggregatedResultChange = mergeResourceArrays(aggregatedResultChange, normalizeResourceArray(requestCopy.filter((item: any) => item.count > 0)));
+        aggregatedResultTo = mergeResourceArrays(aggregatedResultTo, normalizeResourceArray(to));
+        aggregatedResultChange = mergeResourceArrays(
+          aggregatedResultChange,
+          normalizeResourceArray(change),
+        );
 
         return {
           ...entry,
-          resultFrom: [],
-          resultTo: resultingTo,
-          resultChange: requestCopy.filter((item: any) => item.count > 0),
+          resultFrom: from,
+          resultTo: to,
+          resultChange: change,
         };
       });
 
@@ -658,7 +600,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
       return updatedEntries;
     });
-  }, [countRequest, mergeResourceArrays, normalizeResourceArray, resArraySum]);
+  }, [mergeResourceArrays, normalizeResourceArray]);
 
   const handleBarcodeScanned = useCallback(
     (id: string) => {
@@ -676,10 +618,8 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     [addPlantToMulti, loadPlantAndNavigateToProcessing, step],
   );
 
-  useEffect(() => {
-    loadAllPlantLevels();
-    loadResources();
-  }, [loadAllPlantLevels, loadResources]);
+  // Справочники (уровни предприятий, ресурсы, гильдии) грузит слой данных при появлении
+  // подписчиков usePlantLevels()/useResources()/useGuilds() — локальных «загрузок на монтирование» нет.
 
   useEffect(() => {
     if (step === 'guild') {
@@ -715,7 +655,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       setSelectedGuild(guild);
       setLoading(true);
       try {
-        const data = await ApiService.getGuildPlants(guild.id);
+        const data = await fetchGuildPlants(guild.id);
         setGuildPlants(sortGuildPlants(data));
         setStep('plant');
       } catch (error: any) {
@@ -794,7 +734,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
       setStep('processing');
     },
-    [allPlantLevels, sortGuildPlants, getIsExtractive],
+    [allPlantLevels, getIsExtractive],
   );
 
   const calculateFrom = useCallback(() => {
@@ -812,7 +752,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     });
     setInputTo(emptyTo);
 
-    const requestCopy = Object.entries(inputFrom)
+    const request = Object.entries(inputFrom)
       .map(([identificator, value]) => ({
         identificator,
         count: parseInt((value as string) || '0', 10),
@@ -820,32 +760,19 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       }))
       .filter((r) => r.count > 0);
 
-    if (requestCopy.length === 0) {
+    if (request.length === 0) {
       Alert.alert('Ошибка', 'Введите хотя бы одно значение');
       return;
     }
 
-    let resultingFrom: any[] = [];
-    let resultingTo: any[] = [];
-
-    formulas.forEach((formula: any) => {
-      const { from, to } = countRequest(formula, requestCopy, 'from');
-      resArraySum(requestCopy, from, -1);
-      resArraySum(resultingFrom, from);
-      resArraySum(resultingTo, to);
+    const { to, change } = feedToPlant(formulas, request, 'from', {
+      techSchoolsOpen: isTechSchoolsOpen(selectedPlant?.plant_level),
     });
 
-    setResultTo(resultingTo);
+    setResultTo(to);
     setResultFrom([]);
-    setResultChange(requestCopy);
-  }, [
-    countRequest,
-    formulaFrom,
-    formulaTo,
-    inputFrom,
-    resArraySum,
-    selectedPlant?.plant_level,
-  ]);
+    setResultChange(change);
+  }, [formulaFrom, formulaTo, inputFrom, selectedPlant?.plant_level]);
 
   const calculateTo = useCallback(() => {
     if (!selectedPlant?.plant_level) return;
@@ -862,7 +789,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     });
     setInputFrom(emptyFrom);
 
-    const requestCopy = Object.entries(inputTo)
+    const request = Object.entries(inputTo)
       .map(([identificator, value]) => ({
         identificator,
         count: parseInt((value as string) || '0', 10),
@@ -870,32 +797,19 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
       }))
       .filter((r) => r.count > 0);
 
-    if (requestCopy.length === 0) {
+    if (request.length === 0) {
       Alert.alert('Ошибка', 'Введите хотя бы одно значение');
       return;
     }
 
-    let resultingFrom: any[] = [];
-    let resultingTo: any[] = [];
-
-    formulas.forEach((formula: any) => {
-      const { from, to } = countRequest(formula, requestCopy, 'to');
-      resArraySum(requestCopy, to, -1);
-      resArraySum(resultingFrom, from);
-      resArraySum(resultingTo, to);
+    const { from, change } = feedToPlant(formulas, request, 'to', {
+      techSchoolsOpen: isTechSchoolsOpen(selectedPlant?.plant_level),
     });
 
-    setResultFrom(resultingFrom);
+    setResultFrom(from);
     setResultTo([]);
-    setResultChange(requestCopy);
-  }, [
-    countRequest,
-    formulaFrom,
-    formulaTo,
-    inputTo,
-    resArraySum,
-    selectedPlant?.plant_level,
-  ]);
+    setResultChange(change);
+  }, [formulaFrom, formulaTo, inputTo, selectedPlant?.plant_level]);
 
   const setInputFromValue = useCallback((identificator: string, value: string) => {
     setInputFrom((prev) => ({
@@ -942,7 +856,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
   const getResourceInfo = useCallback(
     (identificator: string) => {
       const resource = resources.find((r) => r.identificator === identificator);
-      const baseURL = ApiService['api']?.defaults?.baseURL || 'http://192.168.1.101:3000';
+      const baseURL = ApiService.getBaseUrl() || 'http://192.168.1.101:3000';
       return {
         name: resource?.name || identificator,
         imageUrl: `${baseURL}/images/resources/${identificator}.png`,

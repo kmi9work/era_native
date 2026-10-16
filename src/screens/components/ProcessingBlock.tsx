@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import ResourceItem from '../ResourceItem';
 import { usePlantProcessingLogic } from '../hooks/usePlantProcessingLogic';
+import TechSchoolsNotice from './TechSchoolsNotice';
 
 interface ProcessingBlockProps {
   processing: ReturnType<typeof usePlantProcessingLogic>;
@@ -42,6 +43,8 @@ export default function ProcessingBlock({
       <Text style={styles.processingTitle}>
         {isExtractive ? 'Добыча' : 'Переработка'}
       </Text>
+
+      <TechSchoolsNotice open={state.techSchoolsOpen} applied={!isExtractive} />
 
       {isExtractive ? (
         // Режим "Добыча" — упрощённый вид, только результат

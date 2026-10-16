@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { Player } from '../types';
 import { CONFIG } from '../config';
+import { ApiErrorException, normalizeError } from '../data/apiErrors';
 
 // Declare btoa for React Native compatibility
 declare var btoa: (str: string) => string;
@@ -26,7 +26,7 @@ const base64Encode = (str: string): string => {
     const c = i < str.length ? str.charCodeAt(i++) : NaN;
 
     const bitmap = (a << 16) | ((b || 0) << 8) | (c || 0);
-    
+
     output += chars.charAt((bitmap >> 18) & 63);
     output += chars.charAt((bitmap >> 12) & 63);
     output += isNaN(b) ? '=' : chars.charAt((bitmap >> 6) & 63);
@@ -60,15 +60,15 @@ class ApiService {
     // Добавляем Basic Auth заголовок ко всем запросам
     const authHeader = getAuthHeader();
     if (authHeader) {
-      this.api.defaults.headers.common['Authorization'] = authHeader;
+      this.api.defaults.headers.common.Authorization = authHeader;
     }
 
     // Интерцептор для обработки запросов - добавляем Basic Auth если нужно
     this.api.interceptors.request.use(
       (config) => {
-        const authHeader = getAuthHeader();
-        if (authHeader && config.headers) {
-          config.headers['Authorization'] = authHeader;
+        const header = getAuthHeader();
+        if (header && config.headers) {
+          config.headers.Authorization = header;
         }
         return config;
       },
@@ -77,63 +77,56 @@ class ApiService {
       }
     );
 
+    // Д8: интерцептор ОТКЛОНЯЕТ промис с нормализованной ошибкой ApiError.
+    // Раньше здесь возвращался error.response, из-за чего HTTP-ошибка выглядела
+    // как успешный ответ и ответы 4xx/5xx уезжали в setState.
     this.api.interceptors.response.use(
       (response) => response,
       (error) => {
-        return error.response;
+        if (error instanceof ApiErrorException) return Promise.reject(error);
+        return Promise.reject(normalizeError(error));
       }
     );
   }
 
+  // Базовый URL единого клиента (для сборки путей к картинкам ресурсов/флагов)
+  getBaseUrl(): string {
+    return this.api.defaults.baseURL || '';
+  }
+
   // Получить список всех гильдий
-  async getGuilds(): Promise<any[]> {
-    try {
-      const response = await this.api.get('/guilds.json');
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения списка гильдий');
-    }
+  async getGuilds(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/guilds.json', { signal });
+    return response.data;
   }
 
   // Получить предприятия гильдии
-  async getGuildPlants(guildId: number): Promise<any[]> {
-    try {
-      const response = await this.api.get(`/guilds/${guildId}.json`);
-      return response.data.plants || [];
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения предприятий гильдии');
-    }
+  async getGuildPlants(guildId: number, signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get(`/guilds/${guildId}.json`, { signal });
+    return response.data.plants || [];
   }
 
   // Получить доступные места для строительства
-  async getAvailablePlaces(): Promise<any[]> {
-    try {
-      const response = await this.api.get('/plant_places/available_places');
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения доступных мест');
-    }
+  async getAvailablePlaces(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/plant_places/available_places', { signal });
+    return response.data;
   }
 
-  // Получить уровни предприятий по типу
-  async getPlantLevels(plantTypeId: number): Promise<any[]> {
-    try {
-      const response = await this.api.get('/plant_levels.json');
-      const levels = response.data.filter((level: any) => level.plant_type?.id === plantTypeId);
-      return levels;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения уровней предприятий');
-    }
+  /**
+   * @deprecated Оставлен для совместимости: тянет весь список /plant_levels.json и фильтрует
+   * на клиенте. Новый код берёт уровни из кэша слоя (ключ ['plantLevels']).
+   */
+  async getPlantLevels(plantTypeId: number, signal?: AbortSignal): Promise<any[]> {
+    const levels = await this.getAllPlantLevels(signal);
+    return (levels || []).filter(
+      (level: any) => (level.plant_type?.id ?? level.plant_type_id) === plantTypeId
+    );
   }
 
   // Получить информацию о предприятии
-  async getPlant(plantId: number): Promise<any> {
-    try {
-      const response = await this.api.get(`/plants/${plantId}.json`);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения информации о предприятии');
-    }
+  async getPlant(plantId: number, signal?: AbortSignal): Promise<any> {
+    const response = await this.api.get(`/plants/${plantId}.json`, { signal });
+    return response.data;
   }
 
   // Создать новое предприятие
@@ -142,133 +135,98 @@ class ApiService {
     plant_place_id: number | null;
     economic_subject: string;
   }): Promise<any> {
-    try {
-      const response = await this.api.post('/plants.json', data);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка создания предприятия');
-    }
+    const response = await this.api.post('/plants.json', data);
+    return response.data;
   }
 
   // Улучшить предприятие
   async upgradePlant(plantId: number): Promise<any> {
-    try {
-      const response = await this.api.patch(`/plants/${plantId}/upgrade`);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка улучшения предприятия');
-    }
+    const response = await this.api.patch(`/plants/${plantId}/upgrade`);
+    return response.data;
   }
 
   // Уменьшить уровень предприятия
   async downgradePlant(plantId: number): Promise<any> {
-    try {
-      const response = await this.api.patch(`/plants/${plantId}/downgrade`);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка уменьшения уровня предприятия');
-    }
+    const response = await this.api.patch(`/plants/${plantId}/downgrade`);
+    return response.data;
   }
 
   // Получить список всех ресурсов
-  async getAllResources(): Promise<any[]> {
-    try {
-      const response = await this.api.get('/resources/show_all_resources');
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения ресурсов');
-    }
+  async getAllResources(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/resources/show_all_resources', { signal });
+    return response.data;
   }
 
   // Удалить предприятие (для отката при неудаче печати)
   async deletePlant(plantId: number): Promise<void> {
-    try {
-      await this.api.delete(`/plants/${plantId}.json`);
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка удаления предприятия');
-    }
+    await this.api.delete(`/plants/${plantId}.json`);
   }
 
   // Получить все уровни предприятий с формулами (для переработки)
-  async getAllPlantLevels(): Promise<any[]> {
-    try {
-      const response = await this.api.get('/plant_levels.json');
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения уровней предприятий');
-    }
+  async getAllPlantLevels(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/plant_levels.json', { signal });
+    return response.data;
+  }
+
+  // Получить технологии государства (название, текст эффекта, факт открытия)
+  async getTechnologies(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/technologies.json', { signal });
+    return response.data;
   }
 
   // Печать штрихкода для предприятия
   async printBarcode(plantId: number): Promise<{ success: boolean; error?: string }> {
-    try {
-      const response = await this.api.post(`/plants/${plantId}/print_barcode.json`, {}, {
+    const response = await this.api.post(
+      `/plants/${plantId}/print_barcode.json`,
+      {},
+      {
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка печати штрихкода');
-    }
+          'Accept': 'application/json',
+        },
+      }
+    );
+    return response.data;
   }
 
   // Получить активные эффекты для текущего года
-  async getActiveLingeringEffects(): Promise<any[]> {
-    try {
-      const response = await this.api.get('/game_parameters/get_active_lingering_effects');
-      return response.data.effects || [];
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения эффектов гильдий');
-    }
+  async getActiveLingeringEffects(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/game_parameters/get_active_lingering_effects', { signal });
+    return response.data.effects || [];
   }
 
   // Совместимость: получить эффекты гильдий через новый метод
-  async getActiveGuildEffects(): Promise<any[]> {
-    return this.getActiveLingeringEffects();
+  async getActiveGuildEffects(signal?: AbortSignal): Promise<any[]> {
+    return this.getActiveLingeringEffects(signal);
   }
 
-  // Получить список гильдий для рынка
-  async getGuildsList(): Promise<any[]> {
-    try {
-      const response = await this.api.get('/guilds/list.json');
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения списка гильдий');
-    }
+  // Получить список гильдий для рынка.
+  // На живом бэкенде /guilds/list.json отдаёт побайтово тот же ответ, что /guilds.json
+  // (проверено 2026-10-16), поэтому оба метода используют один ключ кэша ['guilds'].
+  async getGuildsList(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/guilds/list.json', { signal });
+    return response.data;
   }
 
   // Получить список иностранных стран
-  async getForeignCountries(): Promise<any[]> {
-    try {
-      const response = await this.api.get('/countries/foreign_countries.json');
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения списка стран');
-    }
+  async getForeignCountries(signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/countries/foreign_countries.json', { signal });
+    return response.data;
   }
 
   // Получить ресурсы с ценами
-  async getResourcesWithPrices(): Promise<{ prices: { off_market: any[]; to_market: any[] } }> {
-    try {
-      const response = await this.api.get('/resources/show_prices.json');
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка получения ресурсов с ценами');
-    }
+  async getResourcesWithPrices(signal?: AbortSignal): Promise<{ prices: { off_market: any[]; to_market: any[] } }> {
+    const response = await this.api.get('/resources/show_prices.json', { signal });
+    return response.data;
   }
 
   // Проверить вероятность ограбления
-  async checkRobbery(guildId: number): Promise<{ probability: number; robbed?: boolean }> {
-    try {
-      const response = await this.api.get('/caravans/check_robbery.json', {
-        params: { guild_id: guildId }
-      });
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Ошибка проверки ограбления');
-    }
+  async checkRobbery(guildId: number, signal?: AbortSignal): Promise<{ probability: number; robbed?: boolean }> {
+    const response = await this.api.get('/caravans/check_robbery.json', {
+      params: { guild_id: guildId },
+      signal,
+    });
+    return response.data;
   }
 
   // Зарегистрировать караван
@@ -276,11 +234,12 @@ class ApiService {
     try {
       const response = await this.api.post('/caravans/register_caravan', data);
       return response.data;
-    } catch (error: any) {
-      if (error.response?.data?.robbed) {
-        return { robbed: true, error: error.response.data.error };
+    } catch (error) {
+      const payload = (error as ApiErrorException)?.payload as { robbed?: boolean; error?: string } | undefined;
+      if (payload?.robbed) {
+        return { robbed: true, error: payload.error };
       }
-      throw new Error(error.response?.data?.message || error.response?.data?.error || 'Ошибка регистрации каравана');
+      throw error;
     }
   }
 }

@@ -1,7 +1,15 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
+import { getErrorMessage } from '../../data/apiErrors';
+import { ensurePlantLevels, getCachedPlantLevelsForType, usePlantLevels } from '../../data/hooks/usePlantLevels';
+import { loadPlant as loadPlantFromLayer } from '../../data/hooks/usePlant';
+import { useResources } from '../../data/hooks/useResources';
+import { useGuilds } from '../../data/hooks/useGuilds';
+import { queryKeys } from '../../data/keys';
+import { queryClient } from '../../data/queryClient';
 import ApiService from '../../services/api';
 import { CONFIG } from '../../config';
+import { feedToPlant, isTechSchoolsOpen } from '../../services/plantProduction';
 
 // Все уникальные входные ресурсы из всех формул
 const deriveFormulaFrom = (formulas: any[]): any[] => {
@@ -33,64 +41,11 @@ const deriveFormulaTo = (formulas: any[]): any[] => {
   return result;
 };
 
-const resArrayMult = (resArray: any[], n: number): any[] => {
-  return resArray.map((res) => ({
-    ...res,
-    count: res.count * n,
-  }));
-};
-
-const resArraySum = (array1: any[], array2: any[], sign: number = 1): any[] => {
-  const arr2Copy = JSON.parse(JSON.stringify(array2));
-  for (const res1 of array1) {
-    for (let i = arr2Copy.length - 1; i >= 0; i--) {
-      if (res1.identificator === arr2Copy[i].identificator) {
-        res1.count += arr2Copy[i].count * sign;
-        arr2Copy.splice(i, 1);
-      }
-    }
-  }
-  for (const res of arr2Copy) {
-    array1.push({ ...res, count: res.count * sign });
-  }
-  return array1;
-};
-
-const isResArrayLess = (resArray1: any[], resArray2: any[]): boolean => {
-  for (const res1 of resArray1) {
-    const var2 = resArray2.find((res2: any) => res1.identificator === res2.identificator);
-    if (!var2) return false;
-    if (res1.count > var2.count) return false;
-  }
-  return true;
-};
-
-const countRequest = (
-  formula: any,
-  request: any[],
-  way: string,
-): { from: any[]; to: any[] } => {
-  let n = 0;
-  let bucket = JSON.parse(JSON.stringify(formula[way]));
-  const formulaPart = formula[way];
-
-  while (
-    isResArrayLess(bucket, request) &&
-    isResArrayLess(resArrayMult(formula.to, n + 1), formula.max_product)
-  ) {
-    bucket = resArraySum(bucket, JSON.parse(JSON.stringify(formulaPart)));
-    n += 1;
-  }
-
-  const to = resArrayMult(formula.to, n);
-  const from = resArrayMult(formula.from, n);
-
-  return { from, to };
-};
-
 export interface PlantProcessingData {
   selectedPlant: any;
   isExtractive: boolean;
+  /** Технология «Технические училища» открыта — влияет на расчёт переработки. */
+  techSchoolsOpen: boolean;
   formulaFrom: any[];
   formulaTo: any[];
   inputFrom: Record<string, string>;
@@ -104,6 +59,7 @@ export const usePlantProcessingLogic = () => {
   const [state, setState] = useState<PlantProcessingData>({
     selectedPlant: null,
     isExtractive: false,
+    techSchoolsOpen: false,
     formulaFrom: [],
     formulaTo: [],
     inputFrom: {},
@@ -113,60 +69,14 @@ export const usePlantProcessingLogic = () => {
     resultChange: [],
   });
 
-  const [allPlantLevels, setAllPlantLevels] = useState<any[]>([]);
-  const [resources, setResources] = useState<any[]>([]);
-  const [guilds, setGuilds] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const initializedRef = useRef(false);
-  const lastLoadedPlantIdRef = useRef<number | null>(null);
-  const lastHandledBarcodeRef = useRef<string | null>(null);
-  
-  // Refs для хранения актуальных данных вместо замыкания
-  const allPlantLevelsRef = useRef<any[]>([]);
-  const guildsRef = useRef<any[]>([]);
-  
-  // Обновляем refs при изменении состояния
-  useEffect(() => {
-    allPlantLevelsRef.current = allPlantLevels;
-  }, [allPlantLevels]);
-  
-  useEffect(() => {
-    guildsRef.current = guilds;
-  }, [guilds]);
+  // Справочники живут в слое данных: TTL, опрос и дедупликация — там же.
+  const levelsQuery = usePlantLevels();
+  const resourcesQuery = useResources();
+  useGuilds();
 
-  // Загрузка справочных данных
-  const loadAllPlantLevels = useCallback(async () => {
-    try {
-      const data = await ApiService.getAllPlantLevels();
-      setAllPlantLevels(data);
-    } catch (error: any) {
-      // ignore
-    }
-  }, []);
-
-  const loadResources = useCallback(async () => {
-    try {
-      const data = await ApiService.getAllResources();
-      setResources(data);
-    } catch (error: any) {
-      // ignore
-    }
-  }, []);
-
-  const loadGuilds = useCallback(async () => {
-    try {
-      const data = await ApiService.getGuilds();
-      const sortedData = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
-      setGuilds(sortedData);
-    } catch (error: any) {
-      // ignore
-    }
-  }, []);
-
-  // Инициализация всех справочных данных
-  const initialize = useCallback(async () => {
-    await Promise.all([loadAllPlantLevels(), loadResources(), loadGuilds()]);
-  }, [loadAllPlantLevels, loadResources, loadGuilds]);
+  const resources = useMemo(() => (resourcesQuery.data as any[]) ?? [], [resourcesQuery.data]);
+  const [, setIsLoading] = useState(false);
+  const isLoadingRef = useRef(false);
 
   const getIsExtractive = useCallback((plant: any): boolean => {
     return plant?.plant_level?.plant_type?.plant_category?.is_extractive || false;
@@ -176,7 +86,7 @@ export const usePlantProcessingLogic = () => {
     (identificator: string) => {
       const resource = resources.find((r) => r.identificator === identificator);
       const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
-      const baseURL = configuredBase || (ApiService['api']?.defaults?.baseURL || '');
+      const baseURL = configuredBase || ApiService.getBaseUrl();
       return {
         name: resource?.name || identificator,
         imageUrl: `${baseURL}/images/resources/${identificator}.png`,
@@ -223,9 +133,13 @@ export const usePlantProcessingLogic = () => {
     [state.selectedPlant],
   );
 
+  /**
+   * Свежие данные предприятия + формулы его уровня.
+   * Предприятие — ключ ['plant', id] с TTL 0 (всегда свежее), уровни — из кэша ['plantLevels].
+   */
   const fetchPlantDetails = useCallback(
-    async (plantId: number, plantLevelsData: any[] = allPlantLevelsRef.current, guildsData: any[] = guildsRef.current) => {
-      const data = await ApiService.getPlant(plantId);
+    async (plantId: number) => {
+      const data = await loadPlantFromLayer(plantId);
 
       if (!data.plant_level) {
         throw new Error('У предприятия нет уровня');
@@ -233,20 +147,30 @@ export const usePlantProcessingLogic = () => {
 
       const currentLevel = data.plant_level.level;
       const plantTypeId = data.plant_level?.plant_type?.id;
-      
+
       if (!plantTypeId) {
         throw new Error('Не удалось определить тип предприятия');
       }
-      
-      // Всегда загружаем СВЕЖИЕ данные уровня предприятия через API
-      const allLevels = await ApiService.getPlantLevels(plantTypeId);
+
+      // Справочник уровней: один запрос на всех (дедупликация в слое), выборка по типу — из кэша.
+      await ensurePlantLevels();
+      const allLevels = getCachedPlantLevelsForType(plantTypeId);
       const fullPlantLevel = allLevels.find((pl: any) => pl.level === currentLevel);
-      
+
       if (!fullPlantLevel) {
         throw new Error(`Уровень ${currentLevel} для типа предприятия не найден`);
       }
 
       const isExtractive = getIsExtractive(data);
+      // Признак технологии берём и из справочника уровней, и из самого предприятия: в ответе
+      // уровня он есть всегда, в /guilds/:id.json — нет (там plant_level собирается вручную).
+      const techSchoolsOpen = isTechSchoolsOpen(fullPlantLevel) || isTechSchoolsOpen(data.plant_level);
+
+      // Список гильдий тоже берём из слоя, а не из локальной копии.
+      if (queryClient.getQueryData(queryKeys.guilds()) === undefined) {
+        await queryClient.refetch([queryKeys.guilds()], { force: true });
+      }
+      const guildsData = (queryClient.getQueryData<any[]>(queryKeys.guilds()) ?? []);
       const guild = data.economic_subject_id
         ? guildsData.find((g: any) => g.id === data.economic_subject_id) || null
         : null;
@@ -289,6 +213,7 @@ export const usePlantProcessingLogic = () => {
         },
         guild,
         isExtractive,
+        techSchoolsOpen,
         formulaFrom: formulaFromData || [],
         formulaTo: formulaToData || [],
         defaultInputFrom,
@@ -302,31 +227,20 @@ export const usePlantProcessingLogic = () => {
   const loadPlant = useCallback(
     async (plantId: number) => {
       // Предотвращаем ТОЛЬКО параллельные вызовы, но разрешаем повторную загрузку
-      if (isLoading) {
+      if (isLoadingRef.current) {
         return;
       }
 
+      isLoadingRef.current = true;
       setIsLoading(true);
 
       try {
-        // Инициализируем данные если ещё не загружены
-        if (!initializedRef.current) {
-          initializedRef.current = true;
-          await initialize();
-        }
-        
-        // Загружаем данные гильдий для определения режима
-        let guildsData = guildsRef.current;
-        if (guildsData.length === 0) {
-          await new Promise<void>(resolve => setTimeout(() => resolve(), 100));
-          guildsData = guildsRef.current;
-        }
-
-        const details = await fetchPlantDetails(plantId, [], guildsData);
+        const details = await fetchPlantDetails(plantId);
 
         setState({
           selectedPlant: details.plant,
           isExtractive: details.isExtractive,
+          techSchoolsOpen: details.techSchoolsOpen,
           formulaFrom: details.formulaFrom,
           formulaTo: details.formulaTo,
           inputFrom: details.defaultInputFrom,
@@ -337,12 +251,13 @@ export const usePlantProcessingLogic = () => {
         });
       } catch (error: any) {
         console.error('[usePlantProcessingLogic] Error loading plant:', error);
-        Alert.alert('Ошибка', error.message || 'Не удалось загрузить данные предприятия');
+        Alert.alert('Ошибка', getErrorMessage(error, 'Не удалось загрузить данные предприятия'));
       } finally {
+        isLoadingRef.current = false;
         setIsLoading(false);
       }
     },
-    [fetchPlantDetails, initialize, isLoading],
+    [fetchPlantDetails],
   );
 
   const setInputFromValue = useCallback((key: string, value: string) => {
@@ -359,107 +274,78 @@ export const usePlantProcessingLogic = () => {
     }));
   }, []);
 
-  const calculateFrom = useCallback(() => {
-    if (!state.selectedPlant?.plant_level?.formulas?.length) return;
-
-    const inputValues: Record<string, number> = {};
-    for (const key of Object.keys(state.inputFrom)) {
-      const val = parseFloat(state.inputFrom[key]);
-      inputValues[key] = isNaN(val) ? 0 : val;
-    }
-
-    const targetArray = Object.entries(inputValues)
-      .filter(([, v]) => v > 0)
-      .map(([identificator, count]) => {
-        const res = state.formulaFrom.find((r: any) => r.identificator === identificator);
-        return { identificator, count, name: res?.name || identificator };
-      });
-
-    if (targetArray.length === 0) return;
-
-    const requestCopy = JSON.parse(JSON.stringify(targetArray));
-    let totalFrom: any[] = [];
-    let totalTo: any[] = [];
-
-    for (const formula of state.selectedPlant.plant_level.formulas) {
-      const hasMatchingInput = formula.from?.some((f: any) =>
-        targetArray.some((t: any) => t.identificator === f.identificator)
-      );
-      if (!hasMatchingInput) continue;
-
-      const result = countRequest(formula, targetArray, 'from');
-      resArraySum(requestCopy, result.from, -1);
-      totalFrom = resArraySum(totalFrom, result.from);
-      totalTo = resArraySum(totalTo, result.to);
-    }
-
-    setState((prev) => ({
-      ...prev,
-      resultFrom: normalizeResourceArray(totalFrom),
-      resultTo: normalizeResourceArray(totalTo),
-      resultChange: normalizeResourceArray(requestCopy.filter((item: any) => item.count > 0)),
-    }));
-  }, [state.selectedPlant, state.inputFrom, state.formulaFrom]);
-
-  const calculateTo = useCallback(() => {
-    if (!state.selectedPlant?.plant_level?.formulas?.length) return;
-
-    const inputValues: Record<string, number> = {};
-    for (const key of Object.keys(state.inputTo)) {
-      const val = parseFloat(state.inputTo[key]);
-      inputValues[key] = isNaN(val) ? 0 : val;
-    }
-
-    const targetArray = Object.entries(inputValues)
-      .filter(([, v]) => v > 0)
-      .map(([identificator, count]) => {
-        const res = state.formulaTo.find((r: any) => r.identificator === identificator);
-        return { identificator, count, name: res?.name || identificator };
-      });
-
-    if (targetArray.length === 0) return;
-
-    const requestCopy = JSON.parse(JSON.stringify(targetArray));
-    let totalFrom: any[] = [];
-    let totalTo: any[] = [];
-
-    for (const formula of state.selectedPlant.plant_level.formulas) {
-      const hasMatchingOutput = formula.to?.some((f: any) =>
-        targetArray.some((t: any) => t.identificator === f.identificator)
-      );
-      if (!hasMatchingOutput) continue;
-
-      const result = countRequest(formula, targetArray, 'to');
-      resArraySum(requestCopy, result.to, -1);
-      totalFrom = resArraySum(totalFrom, result.from);
-      totalTo = resArraySum(totalTo, result.to);
-    }
-
-    setState((prev) => ({
-      ...prev,
-      resultFrom: normalizeResourceArray(totalFrom),
-      resultTo: normalizeResourceArray(totalTo),
-      resultChange: normalizeResourceArray(requestCopy.filter((item: any) => item.count > 0)),
-    }));
-  }, [state.selectedPlant, state.inputTo, state.formulaTo]);
-
   const normalizeResourceArray = useCallback((array: any[] = []): any[] => {
     return array.filter((item) => item && typeof item.count === 'number' && item.count !== 0);
   }, []);
 
-  const reset = useCallback(() => {
-    setState({
-      selectedPlant: state.selectedPlant,
-      isExtractive: state.isExtractive,
-      formulaFrom: state.formulaFrom,
-      formulaTo: state.formulaTo,
-      inputFrom: {},
-      inputTo: {},
-      resultFrom: [],
-      resultTo: [],
-      resultChange: [],
+  const calculateFrom = useCallback(() => {
+    const formulas = state.selectedPlant?.plant_level?.formulas;
+    if (!formulas?.length) return;
+
+    const targetArray = Object.keys(state.inputFrom)
+      .map((identificator) => ({
+        identificator,
+        count: parseFloat(state.inputFrom[identificator]),
+        name:
+          state.formulaFrom.find((r: any) => r.identificator === identificator)?.name || identificator,
+      }))
+      .filter((item) => Number.isFinite(item.count) && item.count > 0);
+
+    if (targetArray.length === 0) return;
+
+    // Единый расчёт (с эффектом «Технических училищ») — src/services/plantProduction.ts
+    const { from, to, change } = feedToPlant(formulas, targetArray, 'from', {
+      techSchoolsOpen: state.techSchoolsOpen,
     });
-    // Восстанавливаем пустые объекты по умолчанию
+
+    setState((prev) => ({
+      ...prev,
+      resultFrom: normalizeResourceArray(from),
+      resultTo: normalizeResourceArray(to),
+      resultChange: normalizeResourceArray(change),
+    }));
+  }, [
+    state.selectedPlant,
+    state.inputFrom,
+    state.formulaFrom,
+    state.techSchoolsOpen,
+    normalizeResourceArray,
+  ]);
+
+  const calculateTo = useCallback(() => {
+    const formulas = state.selectedPlant?.plant_level?.formulas;
+    if (!formulas?.length) return;
+
+    const targetArray = Object.keys(state.inputTo)
+      .map((identificator) => ({
+        identificator,
+        count: parseFloat(state.inputTo[identificator]),
+        name:
+          state.formulaTo.find((r: any) => r.identificator === identificator)?.name || identificator,
+      }))
+      .filter((item) => Number.isFinite(item.count) && item.count > 0);
+
+    if (targetArray.length === 0) return;
+
+    const { from, to, change } = feedToPlant(formulas, targetArray, 'to', {
+      techSchoolsOpen: state.techSchoolsOpen,
+    });
+
+    setState((prev) => ({
+      ...prev,
+      resultFrom: normalizeResourceArray(from),
+      resultTo: normalizeResourceArray(to),
+      resultChange: normalizeResourceArray(change),
+    }));
+  }, [
+    state.selectedPlant,
+    state.inputTo,
+    state.formulaTo,
+    state.techSchoolsOpen,
+    normalizeResourceArray,
+  ]);
+
+  const reset = useCallback(() => {
     const defaultInputFrom: Record<string, string> = {};
     const defaultInputTo: Record<string, string> = {};
     state.formulaFrom.forEach((item: any) => {
@@ -475,6 +361,7 @@ export const usePlantProcessingLogic = () => {
     setState({
       selectedPlant: state.selectedPlant,
       isExtractive: state.isExtractive,
+      techSchoolsOpen: state.techSchoolsOpen,
       formulaFrom: state.formulaFrom,
       formulaTo: state.formulaTo,
       inputFrom: defaultInputFrom,
@@ -483,7 +370,7 @@ export const usePlantProcessingLogic = () => {
       resultTo: [],
       resultChange: [],
     });
-  }, [state.selectedPlant, state.isExtractive, state.formulaFrom, state.formulaTo]);
+  }, [state.selectedPlant, state.isExtractive, state.techSchoolsOpen, state.formulaFrom, state.formulaTo]);
 
   return {
     state,
@@ -495,5 +382,9 @@ export const usePlantProcessingLogic = () => {
     reset,
     getResourceInfo,
     getMaxResourceCount,
+    // Свежесть справочников — для индикации мастеру (Д7/§5).
+    levelsUpdatedAt: levelsQuery.updatedAt,
+    levelsIsStale: levelsQuery.isStale,
+    resourcesUpdatedAt: resourcesQuery.updatedAt,
   };
 };

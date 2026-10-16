@@ -10,6 +10,9 @@ import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navig
 import PlantCostBlock from '../../screens/components/PlantCostBlock';
 import ProcessingBlock from '../../screens/components/ProcessingBlock';
 import { useUpgradeConfirmation } from '../hooks/useUpgradeConfirmation';
+import DataFreshnessBadge from '../../components/DataFreshnessBadge';
+import { queryKeys } from '../../data/keys';
+import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -22,13 +25,13 @@ type PlantWorkshopStackParamList = {
 
 /**
  * Экран подтверждения улучшения предприятия.
- * Отображает информацию о предприятии, стоимость улучшения,
- * блок переработки/добычи и кнопки действий.
+ * Данные предприятия (ключ ['plant', id], TTL 0) и справочник уровней приходят из слоя:
+ * refetch-on-focus, фоновое обновление не перерисовывает введённые значения.
  */
 export default function UpgradeConfirmScreen() {
   const navigation = useNavigation<NavigationProp<PlantWorkshopStackParamList>>();
   const route = useRoute<RouteProp<PlantWorkshopStackParamList, 'UpgradeConfirm'>>();
-  const { plantId, initialPlantData } = route.params as {
+  const { plantId } = route.params as {
     plantId?: number;
     initialPlantData?: any;
   };
@@ -43,7 +46,16 @@ export default function UpgradeConfirmScreen() {
       loadedPlantIdRef.current = plantId;
       loadPlantForUpgrade(plantId);
     }
-  }, [plantId]);
+  }, [plantId, loadPlantForUpgrade]);
+
+  // Возврат на экран улучшения (после работы с цехом, скана) перечитывает предприятие и справочники.
+  useRefetchOnFocus([
+    plantId != null ? queryKeys.plant(plantId) : null,
+    queryKeys.plantLevels(),
+    queryKeys.resources(),
+    // Технологии — для плашки «Технические училища открыты» в блоке переработки.
+    queryKeys.technologies(),
+  ]);
 
   const hasUpgradeCost =
     state.upgradeCost !== null && Object.keys(state.upgradeCost).length > 0;
@@ -81,6 +93,12 @@ export default function UpgradeConfirmScreen() {
         showsVerticalScrollIndicator={true}
       >
         <Text style={styles.stepTitle}>Улучшение предприятия</Text>
+
+        <View style={styles.statusRow}>
+          <DataFreshnessBadge
+            keys={[plantId != null ? queryKeys.plant(plantId) : null, queryKeys.plantLevels()]}
+          />
+        </View>
 
         {/* Информация о предприятии */}
         <View style={styles.plantInfoBlock}>
@@ -169,6 +187,9 @@ const styles = StyleSheet.create({
   plantInfoText: {
     fontSize: 14,
     color: '#666',
+  },
+  statusRow: {
+    marginBottom: 10,
   },
   actionsContainer: {
     borderTopWidth: 1,

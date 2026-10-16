@@ -296,6 +296,9 @@ export const processingStyles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
+  multiNotice: {
+    marginBottom: 12,
+  },
   multiHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -307,6 +310,11 @@ export const processingStyles = StyleSheet.create({
     color: '#444',
     flex: 1,
     marginRight: 12,
+  },
+  multiHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   multiClearButton: {
     paddingHorizontal: 14,

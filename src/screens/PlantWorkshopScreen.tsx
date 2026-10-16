@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import {
   createStackNavigator,
@@ -9,9 +9,13 @@ import {
   NavigationProp,
 } from '@react-navigation/native';
 import ScannerStatusBadge from '../components/ScannerStatusBadge';
+import DataFreshnessBadge from '../components/DataFreshnessBadge';
 import { useBarcodeScannerContext } from '../context/BarcodeScannerContext';
 import ApiService from '../services/api';
 import { CONFIG } from '../config';
+import { loadPlant } from '../data/hooks/usePlant';
+import { queryKeys } from '../data/keys';
+import { queryClient } from '../data/queryClient';
 import { MultiEnterpriseProvider, useMultiEnterprise, useMultiEnterpriseLogic } from './PlantWorkshopScreens/multiEnterpriseContext';
 
 // Внутренние экраны
@@ -84,6 +88,7 @@ function PlantWorkshopHeader({ navigation, options }: StackHeaderProps) {
         </TouchableOpacity>
       </View>
       <View style={styles.headerRight}>
+        <DataFreshnessBadge style={styles.headerBadge} />
         <ScannerStatusBadge style={styles.headerBadge} />
       </View>
     </View>
@@ -96,8 +101,7 @@ function PlantWorkshopHeader({ navigation, options }: StackHeaderProps) {
 
 const processPlantForMultiEnterprise = (plantData: any) => {
   const isExtractive = plantData?.plant_level?.plant_type?.plant_category?.is_extractive || false;
-  const plantType = plantData.plant_level?.plant_type;
-  
+
   const formulaFrom: any[] = [];
   const formulaTo: any[] = [];
   
@@ -134,7 +138,7 @@ const processPlantForMultiEnterprise = (plantData: any) => {
   }
 
   const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
-  const baseURL = configuredBase || (ApiService['api']?.defaults?.baseURL || 'http://192.168.1.101:3000');
+  const baseURL = configuredBase || ApiService.getBaseUrl();
   formulaFrom.forEach((item: any) => {
     item.imageUrl = `${baseURL}/images/resources/${item.identificator}.png`;
   });
@@ -172,6 +176,7 @@ function PlantWorkshopStackInner() {
     totals,
     isLoading,
     resources,
+    techSchoolsOpen,
     addEntry,
     removeEntry,
     clearEntries,
@@ -199,7 +204,9 @@ function PlantWorkshopStackInner() {
 
     setLoading(true);
     try {
-      const plantData = await ApiService.getPlant(enterpriseId);
+      // Данные предприятия всегда свежие: идём через слой (ключ ['plant', id], TTL 0),
+      // предыдущий запрос по тому же ключу отменяется слоем.
+      const plantData = await loadPlant(enterpriseId);
       
       if (!plantData) {
         Alert.alert('Ошибка', 'Предприятие не найдено');
@@ -217,13 +224,15 @@ function PlantWorkshopStackInner() {
       const rootState = navigation.getState();
       const plantWorkshopRoute = rootState.routes.find(r => r.name === 'PlantWorkshop');
       const innerState = plantWorkshopRoute?.state;
-      const currentInnerRoute = innerState?.routes?.[innerState.index ?? 0]?.name;
+      const currentInnerRoute = innerState?.routes?.[innerState?.index ?? 0]?.name;
       const isOnMultiScreen = currentInnerRoute === 'MultiEnterprises';
 
       if (isOnMultiScreen) {
         // On MultiEnterprises screen: add to the multi-enterprise list
         const entry = processPlantForMultiEnterprise(plantData);
         addEntry(entry);
+        // После добавления в мультисписок ключи предприятия считаются устаревшими.
+        queryClient.invalidate([queryKeys.plant(plantData.id)]);
       } else {
         // On any other screen: use nested navigation syntax
         // This tells the root navigator to navigate to PlantWorkshop,
@@ -248,7 +257,7 @@ function PlantWorkshopStackInner() {
     return () => {
       unsubscribe();
     };
-  }, [addListener]);
+  }, [addListener, handleBarcodeScanned]);
 
   const commonScreenOptions = {
     header: PlantWorkshopHeader,
@@ -260,6 +269,7 @@ function PlantWorkshopStackInner() {
       totals,
       isLoading,
       resources,
+      techSchoolsOpen,
       addEntry,
       removeEntry,
       clearEntries,

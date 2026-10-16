@@ -1,10 +1,12 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import { useResources } from '../../data/hooks/useResources';
 import ApiService from '../../services/api';
 import { CONFIG } from '../../config';
+import { feedToPlant, isTechSchoolsOpen } from '../../services/plantProduction';
 
 const getBaseUrl = () => {
   const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
-  return configuredBase || (ApiService['api']?.defaults?.baseURL || 'http://192.168.1.38:3000');
+  return configuredBase || ApiService.getBaseUrl() || 'http://192.168.1.38:3000';
 };
 
 const addResourceMeta = (resources: any[], resourcesList: any[]): any[] => {
@@ -20,85 +22,8 @@ const addResourceMeta = (resources: any[], resourcesList: any[]): any[] => {
 };
 
 // Helper functions for resource calculations
-const deriveFormulaFrom = (formulas: any[]): any[] => {
-  const seen = new Set<string>();
-  const result: any[] = [];
-  for (const f of (formulas || [])) {
-    for (const item of (f.from || [])) {
-      if (!seen.has(item.identificator)) {
-        seen.add(item.identificator);
-        result.push(item);
-      }
-    }
-  }
-  return result;
-};
-
-const deriveFormulaTo = (formulas: any[]): any[] => {
-  const seen = new Set<string>();
-  const result: any[] = [];
-  for (const f of (formulas || [])) {
-    for (const item of (f.to || [])) {
-      if (!seen.has(item.identificator)) {
-        seen.add(item.identificator);
-        result.push(item);
-      }
-    }
-  }
-  return result;
-};
-
-const resArrayMult = (resArray: any[], n: number): any[] => {
-  return resArray.map((res) => ({ ...res, count: res.count * n }));
-};
-
-const resArraySum = (array1: any[], array2: any[], sign: number = 1): any[] => {
-  const arr2Copy = JSON.parse(JSON.stringify(array2));
-  for (const res1 of array1) {
-    for (let i = arr2Copy.length - 1; i >= 0; i--) {
-      if (res1.identificator === arr2Copy[i].identificator) {
-        res1.count += arr2Copy[i].count * sign;
-        arr2Copy.splice(i, 1);
-      }
-    }
-  }
-  for (const res of arr2Copy) {
-    array1.push({ ...res, count: res.count * sign });
-  }
-  return array1;
-};
-
-const isResArrayLess = (resArray1: any[], resArray2: any[]): boolean => {
-  for (const res1 of resArray1) {
-    const var2 = resArray2.find((res2: any) => res1.identificator === res2.identificator);
-    if (!var2) return false;
-    if (res1.count > var2.count) return false;
-  }
-  return true;
-};
-
-const countRequest = (
-  formula: any,
-  request: any[],
-  way: string,
-  resArrayMultFn: typeof resArrayMult,
-  resArraySumFn: typeof resArraySum,
-  isResArrayLessFn: typeof isResArrayLess,
-): { from: any[]; to: any[] } => {
-  let n = 0;
-  let bucket = JSON.parse(JSON.stringify(formula[way]));
-  const formulaPart = formula[way];
-
-  while (
-    isResArrayLessFn(bucket, request) &&
-    isResArrayLessFn(resArrayMultFn(formula.to, n + 1), formula.max_product)
-  ) {
-    bucket = resArraySumFn(bucket, JSON.parse(JSON.stringify(formulaPart)));
-    n += 1;
-  }
-
-  return { from: resArrayMultFn(formula.from, n), to: resArrayMultFn(formula.to, n) };
-};
+// Расчёт переработки (включая эффект «Технических училищ») — в src/services/plantProduction.ts,
+// здесь только навешивание названий и картинок ресурсов.
 
 export interface MultiEnterpriseEntry {
   plantId: number;
@@ -125,6 +50,8 @@ export interface MultiEnterpriseContextType {
   totals: MultiTotals;
   isLoading: boolean;
   resources: any[];
+  /** Открыта ли технология «Технические училища» для предприятий списка. */
+  techSchoolsOpen: boolean;
   addEntry: (entry: MultiEnterpriseEntry) => void;
   removeEntry: (plantId: number) => void;
   clearEntries: () => void;
@@ -150,20 +77,10 @@ export const useMultiEnterpriseLogic = () => {
   const [entries, setEntries] = useState<MultiEnterpriseEntry[]>([]);
   const [totals, setTotals] = useState<MultiTotals>({ resultFrom: [], resultTo: [], resultChange: [] });
   const [isLoading, setIsLoading] = useState(false);
-  const [resources, setResources] = useState<any[]>([]);
 
-  // Load resources on mount
-  useEffect(() => {
-    const loadResources = async () => {
-      try {
-        const data = await ApiService.getAllResources();
-        setResources(data);
-      } catch (error) {
-        // ignore
-      }
-    };
-    loadResources();
-  }, []);
+  // Справочник ресурсов берётся из слоя: ключ ['resources'], TTL 300 с, опрос 60 с в фокусе.
+  const resourcesQuery = useResources();
+  const resources = useMemo(() => (resourcesQuery.data as any[]) ?? [], [resourcesQuery.data]);
 
   const addEntry = useCallback((entry: MultiEnterpriseEntry) => {
     setEntries((prev) => {
@@ -200,11 +117,11 @@ export const useMultiEnterpriseLogic = () => {
       return;
     }
 
+    const updatedEntries: MultiEnterpriseEntry[] = [];
     let aggregatedResultTo: any[] = [];
-    let aggregatedResultFrom: any[] = [];
     let aggregatedResultChange: any[] = [];
 
-    const updatedEntries = entries.map((entry) => {
+    for (const entry of entries) {
       // For extractive plants, just use formulaTo
       if (entry.isExtractive) {
         const resultTo = addResourceMeta((entry.formulaTo || []).map((resource: any) => ({
@@ -213,20 +130,12 @@ export const useMultiEnterpriseLogic = () => {
         })), resources);
 
         aggregatedResultTo = aggregatedResultTo.concat(resultTo);
-
-        return {
-          ...entry,
-          resultFrom: [],
-          resultTo,
-          resultChange: [],
-        };
+        updatedEntries.push({ ...entry, resultFrom: [], resultTo, resultChange: [] });
+        continue;
       }
 
       // For processing plants, calculate based on input
       const formulas = entry.plant?.plant_level?.formulas || [];
-      if (formulas.length === 0) {
-        return { ...entry, resultFrom: [], resultTo: [], resultChange: [] };
-      }
 
       const requestArray = Object.entries(entry.inputFrom || {})
         .map(([identificator, value]) => ({
@@ -235,60 +144,55 @@ export const useMultiEnterpriseLogic = () => {
         }))
         .filter((item) => item.count > 0);
 
-      if (requestArray.length === 0) {
-        return { ...entry, resultFrom: [], resultTo: [], resultChange: [] };
+      if (formulas.length === 0 || requestArray.length === 0) {
+        updatedEntries.push({ ...entry, resultFrom: [], resultTo: [], resultChange: [] });
+        continue;
       }
 
-      const requestCopy = JSON.parse(JSON.stringify(requestArray));
-      let resultingFrom: any[] = [];
-      let resultingTo: any[] = [];
-
-      formulas.forEach((formula: any) => {
-        const { from, to } = countRequest(
-          formula,
-          requestCopy,
-          'from',
-          resArrayMult,
-          resArraySum,
-          isResArrayLess
-        );
-        if (from.length > 0) {
-          resArraySum(resultingFrom, from);
-          resArraySum(requestCopy, from, -1);
-        }
-        if (to.length > 0) {
-          resArraySum(resultingTo, to);
-        }
+      // Единый расчёт: последовательный расход сырья по формулам + эффект «Технических училищ».
+      const { from, to, change } = feedToPlant(formulas, requestArray, 'from', {
+        techSchoolsOpen: isTechSchoolsOpen(entry.plant?.plant_level ?? entry.fullPlantLevel),
       });
 
-      // Add meta to results
-      const resultingToWithMeta = addResourceMeta(resultingTo, resources);
-      const requestCopyWithMeta = addResourceMeta(requestCopy.filter((item: any) => item.count > 0), resources);
+      const resultTo = addResourceMeta(to, resources);
+      const resultChange = addResourceMeta(change, resources);
 
-      aggregatedResultTo = aggregatedResultTo.concat(resultingToWithMeta);
-      aggregatedResultChange = aggregatedResultChange.concat(requestCopyWithMeta);
+      aggregatedResultTo = aggregatedResultTo.concat(resultTo);
+      aggregatedResultChange = aggregatedResultChange.concat(resultChange);
 
-      return {
+      updatedEntries.push({
         ...entry,
-        resultFrom: [],
-        resultTo: resultingToWithMeta,
-        resultChange: requestCopyWithMeta,
-      };
-    });
+        resultFrom: addResourceMeta(from, resources),
+        resultTo,
+        resultChange,
+      });
+    }
 
-    // Add meta to aggregated totals
+    // Результаты кладутся и в строки, и в итоги: раньше результат по предприятию не доезжал
+    // до строки (возврат forEach отбрасывался), и таблица показывала базовую формулу уровня.
+    setEntries(updatedEntries);
     setTotals({
-      resultFrom: addResourceMeta(aggregatedResultFrom, resources),
+      resultFrom: [],
       resultTo: addResourceMeta(aggregatedResultTo, resources),
       resultChange: addResourceMeta(aggregatedResultChange, resources),
     });
   }, [entries, resources]);
+
+  /** Технология «Технические училища» открыта хотя бы для одного перерабатывающего предприятия списка. */
+  const techSchoolsOpen = useMemo(
+    () =>
+      entries.some(
+        (entry) => !entry.isExtractive && isTechSchoolsOpen(entry.plant?.plant_level ?? entry.fullPlantLevel),
+      ),
+    [entries],
+  );
 
   return {
     entries,
     totals,
     isLoading,
     resources,
+    techSchoolsOpen,
     addEntry,
     removeEntry,
     clearEntries,

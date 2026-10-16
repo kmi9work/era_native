@@ -12,18 +12,22 @@ import type { TextInput as RNTextInput } from 'react-native';
 import ResourceItem from '../ResourceItem';
 import { useMultiEnterprise } from './multiEnterpriseContext';
 import { processingStyles } from '../components/processing/styles';
+import TechSchoolsNotice from '../components/TechSchoolsNotice';
 import ApiService from '../../services/api';
 import { CONFIG } from '../../config';
+import DataFreshnessBadge from '../../components/DataFreshnessBadge';
+import { queryKeys } from '../../data/keys';
+import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
 
 const getBaseUrl = () => {
   const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
-  return configuredBase || (ApiService['api']?.defaults?.baseURL || 'http://192.168.1.38:3000');
+  return configuredBase || ApiService.getBaseUrl() || 'http://192.168.1.38:3000';
 };
 
 /**
  * Экран "Много предприятий".
  * Отображает таблицу с предприятиями, полями ввода для перерабатывающих
- * и результатом добычи для добывающих.
+ * и результатом добычи для добывающих. Справочники приходят из слоя данных.
  */
 export default function MultiEnterprisesScreen() {
   const {
@@ -31,11 +35,15 @@ export default function MultiEnterprisesScreen() {
     totals,
     isLoading,
     resources,
+    techSchoolsOpen,
     removeEntry,
     clearEntries,
     setEntryInputFromValue,
     calculateFrom,
   } = useMultiEnterprise();
+
+  // Пока экран в фокусе, справочники (ресурсы, уровни предприятий, технологии) опрашиваются раз в 60 с.
+  useRefetchOnFocus([queryKeys.resources(), queryKeys.plantLevels(), queryKeys.technologies()]);
 
   const inputRefs = useRef<Record<string, RNTextInput | null>>({});
 
@@ -243,18 +251,23 @@ export default function MultiEnterprisesScreen() {
 
   return (
     <View style={processingStyles.multiContainer}>
+      <TechSchoolsNotice open={techSchoolsOpen} style={processingStyles.multiNotice} />
+
       <View style={processingStyles.multiHeaderRow}>
         <Text style={processingStyles.multiHintText}>
           Сканируйте штрихкоды — предприятие добавится в список. Для перерабатывающих предприятий заполните поля перед
           расчётом.
         </Text>
-        <TouchableOpacity 
-          style={processingStyles.multiClearButton} 
-          activeOpacity={0.8} 
-          onPress={clearEntries}
-        >
-          <Text style={processingStyles.multiClearButtonText}>Очистить</Text>
-        </TouchableOpacity>
+        <View style={processingStyles.multiHeaderRight}>
+          <DataFreshnessBadge keys={[queryKeys.resources(), queryKeys.plantLevels()]} />
+          <TouchableOpacity 
+            style={processingStyles.multiClearButton} 
+            activeOpacity={0.8} 
+            onPress={clearEntries}
+          >
+            <Text style={processingStyles.multiClearButtonText}>Очистить</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={processingStyles.multiScroll} showsVerticalScrollIndicator={false}>
