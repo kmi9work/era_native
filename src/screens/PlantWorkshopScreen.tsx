@@ -26,6 +26,7 @@ import PlantLocationScreen from './PlantWorkshopScreens/PlantLocationScreen';
 import PlantConfirmScreen from './PlantWorkshopScreens/PlantConfirmScreen';
 import UpgradeConfirmScreen from './PlantWorkshopScreens/UpgradeConfirmScreen';
 import MultiEnterprisesScreen from './PlantWorkshopScreens/MultiEnterprisesScreen';
+import { componentRegistry } from '../registry';
 
 // ========================
 // Типы
@@ -294,7 +295,7 @@ function PlantWorkshopStackInner() {
         />
         <Stack.Screen
           name="EnterpriseList"
-          component={EnterpriseListScreen}
+          component={componentRegistry.get('two_teams.EnterpriseListScreen') || EnterpriseListScreen}
           options={{
             ...commonScreenOptions,
             title: 'Предприятия гильдии',
@@ -334,7 +335,7 @@ function PlantWorkshopStackInner() {
         />
         <Stack.Screen
           name="MultiEnterprises"
-          component={MultiEnterprisesScreen}
+          component={componentRegistry.get('two_teams.MultiEnterprisesScreen') || MultiEnterprisesScreen}
           options={{
             ...commonScreenOptions,
             title: 'Много предприятий',

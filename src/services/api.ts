@@ -94,6 +94,16 @@ class ApiService {
     return this.api.defaults.baseURL || '';
   }
 
+  /**
+   * Универсальный GET для игровых плагинов: те же baseURL, Basic Auth и
+   * нормализация ошибок, что у остальных запросов клиента. Плагин не создаёт
+   * второй axios и не дублирует авторизацию.
+   */
+  async get(path: string, config?: { signal?: AbortSignal }): Promise<any> {
+    const response = await this.api.get(path, config);
+    return response.data;
+  }
+
   // Получить список всех гильдий
   async getGuilds(signal?: AbortSignal): Promise<any[]> {
     const response = await this.api.get('/guilds.json', { signal });
