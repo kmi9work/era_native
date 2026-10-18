@@ -15,6 +15,13 @@ import MultiEnterprisesScreenWithTwoTeams from './screens/MultiEnterprisesScreen
  * по данным бэкенда (п. 6): `/many_teams/guilds/:id/workshop`.
  */
 export const initTwoTeamsPlugin = () => {
+  // Справочник игр ядра пополняется из плагина, чтобы игра была видна в списке
+  // и в информации об активной игре без правки src/config/game.ts.
+  gameConfig.availableGames.two_teams = {
+    name: 'Two Teams',
+    description: 'Режим «много команд»: добыча и эмбарго гильдий, две и более команд',
+  };
+
   if (!gameConfig.isActive('two_teams')) {
     return;
   }
