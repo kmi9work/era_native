@@ -5,13 +5,13 @@ import ExtractionForbiddenBanner from './ExtractionForbiddenBanner';
 import { useGuildWorkshop } from '../hooks/useGuildWorkshop';
 
 /**
- * Накладка плагина two_teams над экранами цеха предприятий.
+ * Накладка плагина many_teams над экранами цеха предприятий.
  *
  * Показывает надпись для мастеров (п. 8) и яркие отметки «добыча запрещена»
  * (п. 6) в обычном и пакетном режиме. Накладка прозрачна для нажатий
  * (`box-none`), поэтому кнопки экрана остаются доступны.
  */
-export default function TwoTeamsOverlay({ guildIds }: { guildIds: number[] }) {
+export default function ManyTeamsOverlay({ guildIds }: { guildIds: number[] }) {
   const firstGuildId = guildIds.length ? guildIds[0] : undefined;
   const { data } = useGuildWorkshop(firstGuildId);
 

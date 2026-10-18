@@ -295,7 +295,7 @@ function PlantWorkshopStackInner() {
         />
         <Stack.Screen
           name="EnterpriseList"
-          component={componentRegistry.get('two_teams.EnterpriseListScreen') || EnterpriseListScreen}
+          component={componentRegistry.get('many_teams.EnterpriseListScreen') || EnterpriseListScreen}
           options={{
             ...commonScreenOptions,
             title: 'Предприятия гильдии',
@@ -335,7 +335,7 @@ function PlantWorkshopStackInner() {
         />
         <Stack.Screen
           name="MultiEnterprises"
-          component={componentRegistry.get('two_teams.MultiEnterprisesScreen') || MultiEnterprisesScreen}
+          component={componentRegistry.get('many_teams.MultiEnterprisesScreen') || MultiEnterprisesScreen}
           options={{
             ...commonScreenOptions,
             title: 'Много предприятий',

@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import MultiEnterprisesScreen from '../../../../screens/PlantWorkshopScreens/MultiEnterprisesScreen';
-import TwoTeamsOverlay from '../components/TwoTeamsOverlay';
+import ManyTeamsOverlay from '../components/ManyTeamsOverlay';
 import { useMultiEnterprise } from '../../../../screens/PlantWorkshopScreens/multiEnterpriseContext';
 
 /**
@@ -9,7 +9,7 @@ import { useMultiEnterprise } from '../../../../screens/PlantWorkshopScreens/mul
  * мультисписка (у каждой записи есть `guild`), поэтому отметки «добыча
  * запрещена» показываются по всем гильдиям сразу.
  */
-export default function MultiEnterprisesScreenWithTwoTeams() {
+export default function MultiEnterprisesScreenWithManyTeams() {
   const { entries } = useMultiEnterprise();
 
   const guildIds = useMemo<number[]>(() => {
@@ -23,7 +23,7 @@ export default function MultiEnterprisesScreenWithTwoTeams() {
   return (
     <View style={styles.container}>
       <MultiEnterprisesScreen />
-      <TwoTeamsOverlay guildIds={guildIds} />
+      <ManyTeamsOverlay guildIds={guildIds} />
     </View>
   );
 }

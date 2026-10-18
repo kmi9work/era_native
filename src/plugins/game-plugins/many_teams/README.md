@@ -1,8 +1,9 @@
-# Плагин two_teams (era_native)
+# Плагин many_teams (era_native)
 
 Игра «Две команды»: клиент мастеров экономики.
 
-Включение: `ACTIVE_GAME = 'two_teams'` (src/config.ts генерируется скриптами
+Включение: `ACTIVE_GAME = 'many-teams'` (написание `many_teams` тоже
+принимается; src/config.ts генерируется скриптами
 era_scripts либо значение приходит из нативного модуля `GameConfigModule`).
 
 ## Что делает
@@ -18,20 +19,20 @@ era_scripts либо значение приходит из нативного �
 ## Устройство
 
 ```
-two_teams/
+many_teams/
 ├── index.ts                       # регистрация экранов в componentRegistry
 ├── services/guildWorkshop.ts      # GET /many_teams/guilds/:id/workshop
 ├── hooks/useGuildWorkshop.ts      # ключ слоя данных + TTL/опрос
 ├── components/
 │   ├── MastersNotice.tsx          # надпись для мастеров
 │   ├── ExtractionForbiddenBanner.tsx
-│   └── TwoTeamsOverlay.tsx        # накладка над экраном
+│   └── ManyTeamsOverlay.tsx        # накладка над экраном
 └── screens/
-    ├── EnterpriseListScreenWithTwoTeams.tsx
-    └── MultiEnterprisesScreenWithTwoTeams.tsx
+    ├── EnterpriseListScreenWithManyTeams.tsx
+    └── MultiEnterprisesScreenWithManyTeams.tsx
 ```
 
 Плагин ничего не меняет внутри экранов ядра: он их оборачивает и регистрирует
-обёртки в `componentRegistry` под именами `two_teams.EnterpriseListScreen` и
-`two_teams.MultiEnterprisesScreen`. Ядро берёт экран из registry, если плагин
+обёртки в `componentRegistry` под именами `many_teams.EnterpriseListScreen` и
+`many_teams.MultiEnterprisesScreen`. Ядро берёт экран из registry, если плагин
 активен, иначе использует свой (`PlantWorkshopScreen.tsx`).

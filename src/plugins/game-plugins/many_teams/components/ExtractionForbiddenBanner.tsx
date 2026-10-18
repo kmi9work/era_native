@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useRefetchOnFocus } from '../../../../data/useRefetchOnFocus';
-import { twoTeamsKeys, useGuildWorkshop } from '../hooks/useGuildWorkshop';
+import { manyTeamsKeys, useGuildWorkshop } from '../hooks/useGuildWorkshop';
 
 /**
  * Яркая отметка «добыча запрещена» по одной гильдии (п. 6).
@@ -11,7 +11,7 @@ import { twoTeamsKeys, useGuildWorkshop } from '../hooks/useGuildWorkshop';
  */
 export default function ExtractionForbiddenBanner({ guildId }: { guildId: number }) {
   const { data } = useGuildWorkshop(guildId);
-  useRefetchOnFocus([twoTeamsKeys.workshop(guildId)]);
+  useRefetchOnFocus([manyTeamsKeys.workshop(guildId)]);
 
   const forbidden = (data?.plants || []).filter((plant) => plant.extraction_forbidden);
 

@@ -1,5 +1,5 @@
 /**
- * Плагин two_teams в era_native (п. 6 и п. 8).
+ * Плагин many_teams в era_native (п. 6 и п. 8).
  *
  * Проверяется то, что видит мастер на экране цеха: надпись «Обработка добычи и
  * переработки предприятий ТОЛЬКО в программе» и яркая отметка «добыча
@@ -35,7 +35,7 @@ jest.mock('../src/services/api', () => ({
 }));
 
 import ApiService from '../src/services/api';
-import TwoTeamsOverlay from '../src/plugins/game-plugins/two_teams/components/TwoTeamsOverlay';
+import ManyTeamsOverlay from '../src/plugins/game-plugins/many_teams/components/ManyTeamsOverlay';
 
 const collectText = (node: any, acc: string[] = []): string[] => {
   if (node == null) return acc;
@@ -54,7 +54,7 @@ const collectText = (node: any, acc: string[] = []): string[] => {
 const renderOverlay = async (): Promise<ReactTestRenderer> => {
   let tree: ReactTestRenderer;
   await act(async () => {
-    tree = create(<TwoTeamsOverlay guildIds={[1]} />);
+    tree = create(<ManyTeamsOverlay guildIds={[1]} />);
   });
   for (let i = 0; i < 10; i += 1) {
     await act(async () => {
@@ -65,7 +65,7 @@ const renderOverlay = async (): Promise<ReactTestRenderer> => {
   return tree!;
 };
 
-describe('плагин two_teams', () => {
+describe('плагин many_teams', () => {
   it('показывает надпись для мастеров и отметку «добыча запрещена»', async () => {
     const tree = await renderOverlay();
     const text = collectText(tree.toJSON()).join(' | ');
