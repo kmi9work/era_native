@@ -168,6 +168,20 @@ const SettingsScreen = () => {
             </View>
             <Text style={styles.settingButtonArrow}>›</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingButton}
+            onPress={() => navigation.navigate('Battles' as never)}
+          >
+            <Text style={styles.settingButtonIcon}>⚔️</Text>
+            <View style={styles.settingButtonContent}>
+              <Text style={styles.settingButtonText}>Сражения</Text>
+              <Text style={styles.settingButtonDescription}>
+                Бой армий в поле или за город
+              </Text>
+            </View>
+            <Text style={styles.settingButtonArrow}>›</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>

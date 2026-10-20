@@ -34,6 +34,14 @@ export const queryKeys = {
   prices: (): QueryKey => ['prices'],
   /** Вероятность ограбления гильдии: GET /caravans/check_robbery.json?guild_id= */
   robbery: (guildId: number): QueryKey => ['robbery', guildId],
+  /** Армии (все активные): GET /armies.json — экран «Сражения» */
+  armies: (): QueryKey => ['armies'],
+  /** Все государства игры: GET /countries.json (не путать с ['countries'] — foreign_countries) */
+  allCountries: (): QueryKey => ['allCountries'],
+  /** Все поселения: GET /settlements.json?all=1 — выбор города и крепости */
+  settlements: (): QueryKey => ['settlements'],
+  /** Регионы с государством: GET /regions.json — страна поселения */
+  regions: (): QueryKey => ['regions'],
 };
 
 /** Строковые представления ключей (для логов). */

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { CONFIG } from '../config';
 import { ApiErrorException, normalizeError } from '../data/apiErrors';
+import type { Army, Country, Region, Settlement } from '../types';
 
 // Declare btoa for React Native compatibility
 declare var btoa: (str: string) => string;
@@ -221,6 +222,44 @@ class ApiService {
   // Получить список иностранных стран
   async getForeignCountries(signal?: AbortSignal): Promise<any[]> {
     const response = await this.api.get('/countries/foreign_countries.json', { signal });
+    return response.data;
+  }
+
+  // Все армии игры (активные): экран «Сражения»
+  async getArmies(signal?: AbortSignal): Promise<Army[]> {
+    const response = await this.api.get('/armies.json', { signal });
+    return response.data;
+  }
+
+  // Все государства игры (включая текущее): выбор города на экране «Сражения»
+  async getCountries(signal?: AbortSignal): Promise<Country[]> {
+    const response = await this.api.get('/countries.json', { signal });
+    return response.data;
+  }
+
+  // Уничтожить армию (мягкое удаление на бэкенде: DELETE /armies/:id)
+  async deleteArmy(armyId: number): Promise<void> {
+    await this.api.delete(`/armies/${armyId}.json`);
+  }
+
+  // Все поселения (город/столица): для выбора места сражения
+  async getSettlements(signal?: AbortSignal): Promise<Settlement[]> {
+    const response = await this.api.get('/settlements.json', { params: { all: 1 }, signal });
+    return response.data;
+  }
+
+  /**
+   * Регионы с государством: страна поселения выводится из региона.
+   * Бэкенд отдаёт их двумя непересекающимися наборами:
+   * без параметра — свои земли, `?foreign=1` — чужие (в старых сборках параметр
+   * `country_id` игнорируется, а `all=1` не поддерживается). Экран «Сражения»
+   * запрашивает оба и склеивает: иначе город можно выбрать только в своей стране.
+   */
+  async getRegions(signal?: AbortSignal, foreign = false): Promise<Region[]> {
+    const response = await this.api.get('/regions.json', {
+      params: foreign ? { foreign: 1 } : undefined,
+      signal,
+    });
     return response.data;
   }
 

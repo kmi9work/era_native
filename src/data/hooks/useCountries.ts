@@ -17,3 +17,21 @@ export const useCountries = (): QueryState<Country[]> =>
     pollInterval: COUNTRIES_POLL,
     refetchOnMount: 'if-stale',
   });
+
+/**
+ * Все страны игры: GET /countries.json. Ключ ['allCountries'].
+ *
+ * Отдельный ключ от ['countries']: там `foreign_countries` (чужие страны для
+ * рынка), здесь — полный список государств, включая текущее. Нужен экрану
+ * «Сражения»: город обороны выбирается в любой стране, а не только в Руси.
+ */
+export const ALL_COUNTRIES_TTL = 60_000;
+
+export const fetchAllCountries = (signal: AbortSignal): Promise<Country[]> =>
+  ApiService.getCountries(signal);
+
+export const useAllCountries = (): QueryState<Country[]> =>
+  useQuery<Country[]>(queryKeys.allCountries(), fetchAllCountries, {
+    ttl: ALL_COUNTRIES_TTL,
+    refetchOnMount: 'if-stale',
+  });

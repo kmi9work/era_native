@@ -8,6 +8,7 @@ import { BarcodeScannerProvider } from './src/context/BarcodeScannerContext';
 import SettingsScreen from './src/screens/SettingsScreen';
 import PlantWorkshopScreen from './src/screens/PlantWorkshopScreen';
 import MarketScreen from './src/screens/MarketScreen';
+import BattlesScreen from './src/screens/BattlesScreen';
 import { initializePlugins } from './src/plugins';
 
 // Игровые плагины регистрируют свои экраны в componentRegistry; ядро берёт их
@@ -47,6 +48,11 @@ export default function App() {
               name="Market"
               component={MarketScreen}
               options={{ title: 'Рынок' }}
+            />
+            <Stack.Screen
+              name="Battles"
+              component={BattlesScreen}
+              options={{ title: 'Сражения' }}
             />
           </Stack.Navigator>
         </NavigationContainer>

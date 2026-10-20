@@ -71,6 +71,71 @@ export interface Country {
   };
 }
 
+export interface ArmyTroop {
+  id: number;
+  troop_type?: { id: number; name: string; params?: Record<string, unknown> };
+  power?: number;
+  health?: number;
+  damage?: number;
+  max_health?: number;
+  army_id?: number;
+  is_hired?: boolean;
+  params?: Record<string, unknown>;
+}
+
+/** Армия с бэкенда: GET /armies.json. Государство выводится из владельца (country_id может быть null). */
+export interface Army {
+  id: number;
+  name: string;
+  owner_type?: 'Country' | 'Player' | string | null;
+  owner_id?: number | null;
+  country_id?: number | null;
+  owner?: {
+    id: number;
+    name: string;
+    country_id?: number | null;
+    country?: { id: number; name: string } | null;
+  } | null;
+  settlement?: {
+    id: number;
+    name: string;
+    settlement_type_id?: number;
+    settlement_type?: { id: number; name: string } | null;
+    region_id?: number | null;
+  } | null;
+  troops?: ArmyTroop[];
+  attack_power?: number;
+  defense_power?: number;
+}
+
+export interface Building {
+  id: number;
+  building_type_name?: string | null;
+  building_level_level?: number | null;
+  building_level_name?: string | null;
+  building_level?: {
+    level?: number;
+    building_type?: { id: number; name: string } | null;
+  } | null;
+}
+
+export interface Settlement {
+  id: number;
+  name: string;
+  settlement_type_id?: number | null;
+  settlement_type?: { id: number; name: string } | null;
+  region_id?: number | null;
+  buildings?: Building[];
+  income?: number;
+}
+
+export interface Region {
+  id: number;
+  name: string;
+  country_id?: number | null;
+  country?: { id: number; name: string; short_name?: string } | null;
+}
+
 export interface Resource {
   identificator: string;
   name: string;
