@@ -255,6 +255,18 @@ class QueryClient {
   }
 
   private startFetch(entry: QueryEntry, opts: { force?: boolean } = {}): Promise<void> {
+    // Единая точка загрузки: ключ без зарегистрированного fetcher — это ошибка компоновки экрана,
+    // а не сетевой сбой. Раньше такая попытка клала в запись ошибку kind 'network' и мастер видел
+    // шильдик «нет связи» на работающем соединении (проверка свежести читает ошибку записи).
+    if (entry.fetcher === NO_FETCHER) {
+      if (__DEV__) {
+        console.warn(
+          `Слой данных: у ключа ${entry.keyString} нет зарегистрированного fetcher — запрос пропущен`,
+        );
+      }
+      return Promise.resolve();
+    }
+
     const now = Date.now();
     if (entry.fetching && entry.controller) {
       // Дедупликация: пока запрос в полёте, второй не стартует.
@@ -313,13 +325,24 @@ class QueryClient {
   /** Принудительное/фоновое обновление ключей. Никогда не отклоняется. */
   refetch(keys: QueryKey[], opts: { force?: boolean } = {}): Promise<void> {
     const tasks = keys.map((key) => {
-      if (opts.force) {
-        const entry = this.ensure(key);
-        return this.startFetch(entry, { force: true });
+      const entry = this.getEntry(key);
+      // Ключ, на который никто не подписан (fetcher не зарегистрирован), не грузим и НЕ создаём
+      // запись: раньше такая попытка оставляла в записи ошибку kind 'network', и экран показывал
+      // «нет связи» на здоровом соединении. Это ошибка компоновки экрана — в dev говорим о ней
+      // прямо, вместо того чтобы выдавать её за сетевой сбой.
+      if (!entry || entry.fetcher === NO_FETCHER) {
+        if (__DEV__) {
+          console.warn(
+            `Слой данных: обновление ключа ${keyToString(key)} пропущено — fetcher не зарегистрирован ` +
+              '(экран должен читать данные хуком слоя, а не вызывать refetch на «свободный» ключ)',
+          );
+        }
+        return Promise.resolve();
       }
-      if (!this.isStale(key)) return Promise.resolve();
-      const entry = this.ensure(key);
-      return this.startFetch(entry, {});
+      // Выключенный ключ (enabled: false) не грузим — так же ведёт себя и сам useQuery.
+      if (entry.options.enabled === false) return Promise.resolve();
+      if (!opts.force && !this.isStale(key)) return Promise.resolve();
+      return this.startFetch(entry, opts.force ? { force: true } : {});
     });
     return Promise.all(tasks).then(() => undefined);
   }

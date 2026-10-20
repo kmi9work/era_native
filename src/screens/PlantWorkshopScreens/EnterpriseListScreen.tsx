@@ -39,7 +39,9 @@ export default function EnterpriseListScreen() {
   const route = useRoute<RouteProp<PlantWorkshopStackParamList, 'EnterpriseList'>>();
   const { guildId, guildName } = route.params as { guildId: number; guildName: string };
 
-  const { state, loadGuildPlants, selectPlant, deletePlant } = useEnterpriseManagement();
+  // id гильдии уходит в хук: он и есть ключ слоя (['guild', id, 'plants']), на который экран
+  // подписывается ниже через useRefetchOnFocus и показывает в шильдике свежести.
+  const { state, loadGuildPlants, selectPlant, deletePlant } = useEnterpriseManagement(guildId);
   const [refreshing, setRefreshing] = useState(false);
 
   // Возврат на список (после улучшения, скана, создания) перечитывает предприятия гильдии.

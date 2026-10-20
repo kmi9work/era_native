@@ -95,11 +95,40 @@ describe('queryClient', () => {
     });
 
     it('молчаливо завершается, когда fetcher для ключа не зарегистрирован', async () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
       const key = queryKeys.guilds();
       queryClient.ensure(key);
 
       await expect(queryClient.refetch([key], { force: true })).resolves.toBeUndefined();
       expect(queryClient.getQueryData(key)).toBeUndefined();
+      // Программная ошибка компоновки экрана не должна выглядеть как обрыв связи:
+      // раньше в записи оставалась ошибка kind 'network' и шильдик показывал «нет связи».
+      expect(queryClient.getEntry(key)?.error).toBeUndefined();
+      expect(queryClient.isConnectionOffline()).toBe(false);
+      expect(warn).toHaveBeenCalled();
+    });
+
+    it('обновление ключа без подписчика не создаёт запись и не взводит «нет связи»', async () => {
+      jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const key = queryKeys.guildPlants(12);
+
+      // так делает refetch-on-focus: ключ посчитан экраном, но данных никто не запросил
+      await queryClient.refetch([key], { force: true });
+
+      expect(queryClient.getEntry(key)).toBeUndefined();
+      expect(queryClient.isConnectionOffline()).toBe(false);
+    });
+
+    it('выключенный ключ (enabled: false) принудительно не обновляется', async () => {
+      const key = queryKeys.guildPlants(null);
+      const fetcher = jest.fn(async () => [{ id: 1 }]);
+      queryClient.ensure(key, fetcher);
+      queryClient.setOptions(key, { ttl: 15_000, pollInterval: 30_000, enabled: false });
+
+      await queryClient.refetch([key], { force: true });
+
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(queryClient.getEntry(key)?.error).toBeUndefined();
     });
 
     it('уход последнего подписчика отменяет запрос и снимает таймер опроса', async () => {

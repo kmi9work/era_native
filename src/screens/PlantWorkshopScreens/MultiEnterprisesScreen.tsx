@@ -42,8 +42,11 @@ export default function MultiEnterprisesScreen() {
     calculateFrom,
   } = useMultiEnterprise();
 
-  // Пока экран в фокусе, справочники (ресурсы, уровни предприятий, технологии) опрашиваются раз в 60 с.
-  useRefetchOnFocus([queryKeys.resources(), queryKeys.plantLevels(), queryKeys.technologies()]);
+  // Пока экран в фокусе, справочники (ресурсы, технологии) опрашиваются раз в 60 с.
+  // Ключа plantLevels в списке нет намеренно: уровни предприятий экран не показывает — формулы
+  // уровня приходят в самой записи предприятия при скане. «Свободный» ключ без подписчика
+  // заставлял слой обновлять данные, которых никто не ждёт (слой такое теперь пропускает).
+  useRefetchOnFocus([queryKeys.resources(), queryKeys.technologies()]);
 
   const inputRefs = useRef<Record<string, RNTextInput | null>>({});
 
@@ -259,7 +262,7 @@ export default function MultiEnterprisesScreen() {
           расчётом.
         </Text>
         <View style={processingStyles.multiHeaderRight}>
-          <DataFreshnessBadge keys={[queryKeys.resources(), queryKeys.plantLevels()]} />
+          <DataFreshnessBadge keys={[queryKeys.resources()]} />
           <TouchableOpacity 
             style={processingStyles.multiClearButton} 
             activeOpacity={0.8} 

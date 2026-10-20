@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Alert } from 'react-native';
 import { getErrorMessage } from '../../data/apiErrors';
 import { useGuildPlants } from '../../data/hooks/useGuildPlants';
@@ -9,8 +9,12 @@ import ApiService from '../../services/api';
 
 /**
  * Хук для управления предприятиями гильдии.
- * Данные — из слоя (ключ ['guild', id, 'plants']): TTL 15 с, опрос 30 с в фокусе,
- * после удаления инвалидируются только затронутые ключи.
+ * id гильдии приходит с экрана (параметры маршрута) и сразу становится ключом слоя
+ * (['guild', id, 'plants']): TTL 15 с, опрос 30 с в фокусе, после удаления инвалидируются
+ * только затронутые ключи.
+ * id обязателен именно здесь: если экран держит один ключ, а хук грузит другой
+ * (`guild:<id>` против `guild:none`), обновление уходит в ключ без подписчика и на экране
+ * загорается «нет связи» при рабочем соединении.
  */
 export interface EnterpriseData {
   id: number;
@@ -47,9 +51,7 @@ export interface EnterpriseManagementState {
   error: unknown;
 }
 
-export function useEnterpriseManagement() {
-  const [guildId, setGuildId] = useState<number | null>(null);
-  const guildIdRef = useRef<number | null>(null);
+export function useEnterpriseManagement(guildId: number | null | undefined) {
   const [selectedPlant, setSelectedPlant] = useState<EnterpriseData | null>(null);
 
   const query = useGuildPlants(guildId);
@@ -59,13 +61,8 @@ export function useEnterpriseManagement() {
     [query.data],
   );
 
+  /** Ручное обновление (pull-to-refresh): принудительно перечитывает ключ этой гильдии. */
   const loadGuildPlants = useCallback(async (id: number) => {
-    if (guildIdRef.current !== id) {
-      // Смена ключа: загрузку выполнит слой при появлении подписчика.
-      guildIdRef.current = id;
-      setGuildId(id);
-      return;
-    }
     await queryClient.refetch([queryKeys.guildPlants(id)], { force: true });
   }, []);
 
