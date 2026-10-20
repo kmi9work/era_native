@@ -44,34 +44,39 @@ const BattlesScreen = () => {
         ? !logic.battleReady
         : false;
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.back}
-          onPress={() => (logic.step === 'place' ? navigation.goBack() : logic.goBack())}
-          accessibilityLabel={logic.step === 'place' ? 'Назад к настройкам' : 'Предыдущий шаг'}
-        >
-          <Text style={styles.backText}>‹</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.title}>Сражения</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
-            {logic.placeTitle}
-          </Text>
-        </View>
-        <DataFreshnessBadge
-          keys={[
-            queryKeys.armies(),
-            queryKeys.allCountries(),
-            queryKeys.settlements(),
-            queryKeys.regions(),
-          ]}
-          style={styles.badge}
-        />
-      </View>
+  // Бой идёт на весь экран: шапка экрана и полоса шагов на этом шаге не рендерятся.
+  const fullscreen = logic.step === 'battle';
 
-      <StepBar step={logic.step} />
+  return (
+    <View style={[styles.container, fullscreen ? styles.containerFullscreen : null]}>
+      {fullscreen ? null : (
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.back}
+            onPress={() => (logic.step === 'place' ? navigation.goBack() : logic.goBack())}
+            accessibilityLabel={logic.step === 'place' ? 'Назад к настройкам' : 'Предыдущий шаг'}
+          >
+            <Text style={styles.backText}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
+            <Text style={styles.title}>Сражения</Text>
+            <Text style={styles.subtitle} numberOfLines={1}>
+              {logic.placeTitle}
+            </Text>
+          </View>
+          <DataFreshnessBadge
+            keys={[
+              queryKeys.armies(),
+              queryKeys.allCountries(),
+              queryKeys.settlements(),
+              queryKeys.regions(),
+            ]}
+            style={styles.badge}
+          />
+        </View>
+      )}
+
+      {logic.step !== 'battle' ? <StepBar step={logic.step} /> : null}
 
       <View style={styles.body}>
         {logic.step === 'place' ? <PlaceStep logic={logic} /> : null}
@@ -104,6 +109,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  containerFullscreen: {
+    // Бой занимает весь экран: тёмный фон вместо светло-серого, чтобы на
+    // краях не было белых полос при повороте и на широких планшетах.
+    backgroundColor: '#263238',
   },
   header: {
     flexDirection: 'row',

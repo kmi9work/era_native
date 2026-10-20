@@ -1,11 +1,12 @@
 /**
  * Итог сражения: подтверждение уничтожения армий, захват города и
- * присоединение павшего государства.
+ * присоединение региона победителю.
  *
- * На бэкенд уходит только DELETE /armies/:id для разбитых армий. Захват города
- * и присоединение государства экран показывает итогом: API захвата города нет
- * (город принадлежит региону, захват региона — отдельное действие), поэтому
- * мастер оформляет это в веб-админке.
+ * На бэкенд уходят: DELETE /armies/:id для разбитых армий и
+ * PATCH /regions/:id/captured_by — когда взята столица государства, регион
+ * столицы передаётся победившей стране (той же кнопкой, что в веб-админке).
+ * Если в бою участвовали армии нескольких государств-союзников, мастер выбирает
+ * страну-получателя. Захвата отдельного города в API нет: город принадлежит региону.
  */
 import React from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -77,63 +78,92 @@ const OutcomePanel: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
         </View>
       ) : null}
 
-      {logic.annexation ? (
+      {logic.annexation && !logic.annexationResult ? (
         <View style={styles.block}>
           <Text style={styles.blockTitle}>
-            Государство {logic.annexation.defendingCountryName}
+            Столица {logic.annexation.capitalName} взята
           </Text>
           <Text style={styles.blockLine}>
-            {logic.annexation.capitalName} — столица, и у государства не осталось армий.
-            Присоединить его к нападающему?
+            Государство {logic.annexation.defendingCountryName}. Регион{' '}
+            {logic.annexation.regionName} можно присоединить к победителю.
           </Text>
+          {logic.annexation.remainingArmyCount > 0 ? (
+            <Text style={styles.blockLine}>
+              У государства осталось армий: {logic.annexation.remainingArmyCount}. По правилам
+              это оккупация — присоединение региона подтверждает мастер.
+            </Text>
+          ) : null}
+
           {logic.annexation.attackerCountries.length === 0 ? (
             <Text style={styles.blockLine}>
-              Государство нападающих не определено — решение мастер принимает в админке.
+              Государство нападающих не определено — регион передаётся в веб-админке.
+            </Text>
+          ) : logic.annexation.attackerCountries.length === 1 ? (
+            <Text style={styles.pickLine}>
+              Победитель: {logic.annexation.attackerCountries[0].name}
             </Text>
           ) : (
-            <View style={styles.chips}>
-              {logic.annexation.attackerCountries.map(country => (
-                <TouchableOpacity
-                  key={country.id}
-                  style={[
-                    styles.chip,
-                    logic.annexationChoice === country.id ? styles.chipActive : null,
-                  ]}
-                  onPress={() => logic.setAnnexationChoice(country.id)}
-                >
-                  <Text
+            <>
+              <Text style={styles.pickLine}>
+                Воевали союзники — выберите, кому присоединить регион:
+              </Text>
+              <View style={styles.chips}>
+                {logic.annexation.attackerCountries.map(country => (
+                  <TouchableOpacity
+                    key={country.id}
                     style={[
-                      styles.chipText,
-                      logic.annexationChoice === country.id ? styles.chipTextActive : null,
+                      styles.chip,
+                      logic.annexationTarget === country.id ? styles.chipActive : null,
                     ]}
+                    onPress={() => logic.setAnnexationChoice(country.id)}
                   >
-                    {country.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+                    <Text
+                      style={[
+                        styles.chipText,
+                        logic.annexationTarget === country.id ? styles.chipTextActive : null,
+                      ]}
+                    >
+                      {country.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
           )}
 
-          {logic.annexationDone ? (
-            <Text style={styles.done}>
-              Решение записано: государство {logic.annexation.defendingCountryName} присоединяется
-              к {logic.countryName(logic.annexationChoice)}. Оформите присоединение в веб-админке
-              (Страны → присоединить) — отдельного API присоединения в клиенте нет.
-            </Text>
-          ) : (
+          {logic.annexation.attackerCountries.length === 0 ? null : (
             <TouchableOpacity
-              style={styles.primaryButton}
+              style={[
+                styles.primaryButton,
+                logic.annexationBusy || logic.annexationTarget === null
+                  ? styles.primaryButtonDisabled
+                  : null,
+              ]}
               onPress={() => {
-                if (logic.annexation?.attackerCountries.length && logic.annexationChoice === null) {
-                  Alert.alert('Выберите государство', 'Укажите, к какому государству присоединить.');
-                  return;
-                }
-                logic.confirmAnnexation();
+                void logic.confirmAnnexation();
               }}
+              disabled={logic.annexationBusy || logic.annexationTarget === null}
             >
-              <Text style={styles.primaryButtonText}>Присоединить государство</Text>
+              {logic.annexationBusy ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Присоединить регион</Text>
+              )}
             </TouchableOpacity>
           )}
+          {logic.annexationError ? (
+            <Text style={styles.error}>Ошибка: {logic.annexationError}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {logic.annexationResult ? (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>Регион передан</Text>
+          <Text style={styles.done}>
+            Регион {logic.annexationResult.regionName} присоединён. Новое государство:{' '}
+            {logic.annexationResult.countryName}.
+          </Text>
         </View>
       ) : null}
 
@@ -201,6 +231,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: 'center',
     marginTop: 8,
+  },
+  primaryButtonDisabled: {
+    backgroundColor: '#b0bec5',
+  },
+  pickLine: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#37474f',
+    marginTop: 6,
   },
   primaryButtonText: {
     color: '#ffffff',

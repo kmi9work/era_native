@@ -1,104 +1,135 @@
 /**
- * Шаг 4. Сражение.
+ * Шаг 4. Сражение — сцена, а не таблица.
  *
- * Сверху — атакующие, снизу — защищающиеся. У каждого отряда кубик к6
- * (у пушки его нет). Когда все кубики легли, экран сам считает попадания и
- * выбирает самые слабые потери; мастер может переставить выбор и подтвердить.
- * После анимации удара — отступление на 4–6 и новый раунд, пока у сторон есть
- * отряды.
+ * Композиция: табло (HUD) → сцена с фишками → лента боя → управление по фазе.
+ * Экран не прокручивается: сцена занимает всё место, а «Состав» и итог
+ * открываются поверх неё. Раунд проигрывает `useScenePlayer`, поэтому в фазе
+ * `playing` остаётся одна кнопка — «Пропустить».
+ *
+ * Ручной выбор потерь сохранён: в фазе `casualties` мастер касается фишки и
+ * меняет авто-выбор (это правило игры, а не оформление).
  */
-import React, { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { canRetreat } from '../../../services/battleRules';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  BackHandler,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { canRetreat, troopPower } from '../../../services/battleRules';
+import DataFreshnessBadge from '../../../components/DataFreshnessBadge';
+import { queryKeys } from '../../../data/keys';
 import type { BattleLogic } from '../../hooks/useBattleLogic';
-import ArmyGroup from '../components/ArmyGroup';
-import DieButton from '../components/DieButton';
+import BattleLog from '../board/BattleLog';
+import BattleStage from '../board/BattleStage';
+import DieBadge from '../board/DieBadge';
+import Hud from '../board/Hud';
+import RosterSheet from '../board/RosterSheet';
 import OutcomePanel from '../components/OutcomePanel';
 
 const PHASE_HINTS: Record<string, string> = {
   rolling:
-    'Бросайте кубики: нажмите на кубик у отряда или «Бросить все» у армии. Пушка в бою не участвует.',
+    'Нажмите «Ход» — кубики бросит вся армия сразу. Можно бросать по одному, касаясь кубика у отряда.',
   casualties:
-    'Система выбрала самые слабые отряды. Можно поменять выбор — нажмите на карточку. Затем подтвердите.',
-  animating: 'Отряды бьют друг друга…',
-  retreat: 'Обе армии сохранились. Любая армия может отступить: для этого нужен бросок 4–6.',
+    'Система выбрала самые слабые отряды. Можно поменять выбор — коснитесь фишки. Затем подтвердите потери.',
+  playing: 'Идёт бой: удары, потери, лента событий.',
+  retreat: 'Обе стороны сохранились. Любая армия может отступить: нужен бросок 4–6.',
   finished: 'Сражение завершено.',
 };
 
+/**
+ * Бой идёт на весь экран, поверх шапки экрана «Сражения», поэтому табло само
+ * отступает под строку статуса. `SafeAreaProvider` в проекте не подключён —
+ * берём высоту строки статуса у платформы.
+ */
+const STATUS_TOP = Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 44;
+
 const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
-  const { phase, victims, hits, battleArmies } = logic;
+  const [rosterVisible, setRosterVisible] = useState(false);
 
-  const animations = useMemo(() => {
-    const map: Record<string, 'strike' | 'victim'> = {};
-    if (phase !== 'animating') return map;
-    [...victims.attacker, ...victims.defender].forEach(uid => {
-      map[uid] = 'victim';
+  // Системная «назад» на полноэкранном бою возвращает к баффам, а не выкидывает
+  // из экрана «Сражения» вместе с набранной сценой.
+  const goBack = logic.goBack;
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      goBack();
+      return true;
     });
-    battleArmies.forEach(army => {
-      army.troops.forEach(troop => {
-        if (map[troop.uid]) return;
-        const view = logic.troopView(army, troop);
-        if (view.isHit) map[troop.uid] = 'strike';
-      });
-    });
-    return map;
-  }, [battleArmies, logic, phase, victims.attacker, victims.defender]);
+    return () => subscription.remove();
+  }, [goBack]);
 
-  const retreatArmies = battleArmies.filter(
-    army => !army.retreated && army.troops.length > 0,
+  // Силы сторон на начало боя: полосы в HUD должны показывать потери, а не
+  // «сколько было минуту назад». Сцена монтируется один раз на бой.
+  const initialTroops = useRef({
+    attacker: logic.troopsBySide.attacker,
+    defender: logic.troopsBySide.defender,
+  });
+
+  const power = useMemo(
+    () => ({
+      attacker: logic.attackers.reduce(
+        (sum, army) => sum + army.troops.reduce((acc, troop) => acc + troopPower(troop.kind), 0),
+        0,
+      ),
+      defender: logic.defenders.reduce(
+        (sum, army) => sum + army.troops.reduce((acc, troop) => acc + troopPower(troop.kind), 0),
+        0,
+      ),
+    }),
+    [logic.attackers, logic.defenders],
   );
 
+  const retreatArmies = logic.battleArmies.filter(army => !army.retreated && army.troops.length > 0);
+
   return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <View style={styles.roundBar}>
-        <Text style={styles.roundTitle}>Раунд {logic.round}</Text>
-        <Text style={styles.roundHits}>
-          попадания: атакующие — {hits.attacker}, защищающиеся — {hits.defender}
-        </Text>
-      </View>
+    <View style={styles.container}>
+      <Hud
+        round={logic.round}
+        placeTitle={logic.placeTitle}
+        phase={logic.phase}
+        hint={PHASE_HINTS[logic.phase] || ''}
+        troops={logic.troopsBySide}
+        initial={initialTroops.current}
+        power={power}
+        hits={logic.hits}
+        speed={logic.scene.speed}
+        onSpeed={logic.scene.setSpeed}
+        topInset={STATUS_TOP}
+        onBack={logic.goBack}
+      />
 
-      {logic.cannonWarning ? (
-        <View style={styles.warning}>
-          <Text style={styles.warningTitle}>Внимание</Text>
-          <Text style={styles.warningText}>{logic.cannonWarning}</Text>
-        </View>
-      ) : null}
+      <BattleStage logic={logic} />
+      <BattleLog lines={logic.sceneLog} />
 
-      <Text style={styles.phaseHint}>{PHASE_HINTS[phase]}</Text>
-
-      {phase === 'casualties' ? (
-        <View style={styles.casualtiesBlock}>
-          <Text style={styles.casualtiesLine}>
-            Атакующие нанесли {hits.attacker} — отметьте {Math.min(hits.attacker, logic.troopsBySide.defender)}{' '}
-            у защищающихся.
-          </Text>
-          <Text style={styles.casualtiesLine}>
-            Защищающиеся нанесли {hits.defender} — отметьте {Math.min(hits.defender, logic.troopsBySide.attacker)}{' '}
-            у атакующих.
-          </Text>
-          <Text style={styles.casualtiesSelected}>
-            выбрано: у атакующих {victims.attacker.length}, у защищающихся {victims.defender.length}
-          </Text>
-          <TouchableOpacity
-            style={[styles.primaryButton, logic.victimsReady ? null : styles.primaryDisabled]}
-            disabled={!logic.victimsReady}
-            onPress={logic.confirmCasualties}
-          >
-            <Text style={styles.primaryButtonText}>Подтвердить потери</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      {phase === 'retreat' ? (
-        <View style={styles.retreatBlock}>
-          {logic.roundMessage ? <Text style={styles.retreatNote}>{logic.roundMessage}</Text> : null}
-          {retreatArmies.map(army => (
-            <View key={army.uid} style={styles.retreatRow}>
-              <View style={styles.retreatInfo}>
-                <Text style={styles.retreatName}>{army.name}</Text>
+      {logic.phase === 'retreat' ? (
+        <View style={styles.retreat}>
+          {logic.roundMessage ? (
+            <Text style={styles.retreatNote}>{logic.roundMessage}</Text>
+          ) : null}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {retreatArmies.map(army => (
+              <View key={army.uid} style={styles.retreatCard}>
+                <Text style={styles.retreatName} numberOfLines={1}>
+                  {army.name}
+                </Text>
                 <Text style={styles.retreatMeta}>
                   {logic.sideLabel(army.side)} · отрядов: {army.troops.length}
                 </Text>
+                <TouchableOpacity
+                  onPress={() => logic.retreatArmy(army.uid)}
+                  disabled={army.retreatRoll !== null || !!logic.retreatSpinning[army.uid]}
+                  accessibilityLabel={`Бросить отступление: ${army.name}`}
+                >
+                  <DieBadge
+                    value={army.retreatRoll}
+                    spinning={!!logic.retreatSpinning[army.uid]}
+                    size={30}
+                  />
+                </TouchableOpacity>
                 {army.retreatRoll !== null ? (
                   <Text
                     style={[
@@ -108,232 +139,212 @@ const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
                   >
                     {canRetreat(army.retreatRoll)
                       ? `отступила (${army.retreatRoll})`
-                      : `не смогла (${army.retreatRoll}), остаётся в бою`}
+                      : `не смогла (${army.retreatRoll})`}
                   </Text>
-                ) : null}
+                ) : (
+                  <Text style={styles.retreatHint}>4–6</Text>
+                )}
               </View>
-              <DieButton
-                value={army.retreatRoll}
-                spinning={!!logic.retreatSpinning[army.uid]}
-                disabled={army.retreatRoll !== null || !!logic.retreatSpinning[army.uid]}
-                onPress={() => logic.retreatArmy(army.uid)}
-                caption="4–6"
-              />
-            </View>
-          ))}
-          <TouchableOpacity style={styles.primaryButton} onPress={logic.nextRound}>
-            <Text style={styles.primaryButtonText}>Продолжить бой</Text>
-          </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
       ) : null}
 
-      <Text style={styles.sideTitleAttacker}>Атакующие</Text>
-      {logic.attackers.length === 0 ? (
-        <Text style={styles.empty}>Атакующих армий нет</Text>
-      ) : (
-        logic.attackers.map(army => (
-          <ArmyGroup
-            key={army.uid}
-            army={army}
-            logic={logic}
-            mode="battle"
-            animations={animations}
-            highlighted={army.side === 'attacker'}
-          />
-        ))
-      )}
+      <View style={styles.controls}>
+        {logic.phase === 'casualties' ? (
+          <Text style={styles.casualtiesText} numberOfLines={2}>
+            Попадания: атакующие {logic.hits.attacker} → отметьте{' '}
+            {Math.min(logic.hits.attacker, logic.troopsBySide.defender)} у защищающихся;
+            защищающиеся {logic.hits.defender} → отметьте{' '}
+            {Math.min(logic.hits.defender, logic.troopsBySide.attacker)} у атакующих.
+          </Text>
+        ) : null}
 
-      <View style={styles.divider}>
-        <Text style={styles.dividerText}>поле боя</Text>
+        <TouchableOpacity style={styles.rosterButton} onPress={() => setRosterVisible(true)}>
+          <Text style={styles.rosterButtonText}>Состав</Text>
+        </TouchableOpacity>
+
+        {logic.phase === 'rolling' ? (
+          <TouchableOpacity
+            style={[styles.primary, logic.canRollAll ? null : styles.primaryDisabled]}
+            onPress={logic.rollAll}
+            disabled={!logic.canRollAll}
+          >
+            <Text style={styles.primaryText}>Ход</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {logic.phase === 'casualties' ? (
+          <TouchableOpacity
+            style={[styles.primary, logic.victimsReady ? null : styles.primaryDisabled]}
+            onPress={logic.confirmCasualties}
+            disabled={!logic.victimsReady}
+          >
+            <Text style={styles.primaryText}>Подтвердить потери</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {logic.phase === 'playing' ? (
+          <TouchableOpacity style={styles.secondary} onPress={logic.skipScene}>
+            <Text style={styles.secondaryText}>Пропустить</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {logic.phase === 'retreat' ? (
+          <TouchableOpacity style={styles.primary} onPress={logic.nextRound}>
+            <Text style={styles.primaryText}>Продолжить бой</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
-      <Text style={styles.sideTitleDefender}>Защищающиеся</Text>
-      {logic.defenders.length === 0 ? (
-        <Text style={styles.empty}>Защищающихся армий нет</Text>
-      ) : (
-        logic.defenders.map(army => (
-          <ArmyGroup
-            key={army.uid}
-            army={army}
-            logic={logic}
-            mode="battle"
-            animations={animations}
-            highlighted={army.side === 'defender'}
-          />
-        ))
-      )}
-
-      {phase === 'finished' ? <OutcomePanel logic={logic} /> : null}
-
-      {phase === 'casualties' ? (
-        <TouchableOpacity
-          style={[styles.primaryButton, styles.bottomButton, logic.victimsReady ? null : styles.primaryDisabled]}
-          disabled={!logic.victimsReady}
-          onPress={logic.confirmCasualties}
-        >
-          <Text style={styles.primaryButtonText}>Подтвердить потери</Text>
-        </TouchableOpacity>
+      {logic.phase === 'finished' ? (
+        <View style={styles.overlay}>
+          <ScrollView contentContainerStyle={styles.overlayContent}>
+            <OutcomePanel logic={logic} />
+          </ScrollView>
+        </View>
       ) : null}
-    </ScrollView>
+
+      <RosterSheet
+        visible={rosterVisible}
+        logic={logic}
+        onClose={() => setRosterVisible(false)}
+        badge={
+          <DataFreshnessBadge
+            keys={[
+              queryKeys.armies(),
+              queryKeys.allCountries(),
+              queryKeys.settlements(),
+              queryKeys.regions(),
+            ]}
+          />
+        }
+      />
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  content: {
-    padding: 16,
-    paddingBottom: 32,
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
   },
-  roundBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  roundTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#263238',
-  },
-  roundHits: {
-    fontSize: 11,
-    color: '#607d8b',
-  },
-  warning: {
-    backgroundColor: '#fff3e0',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#ffb74d',
-    padding: 10,
-    marginBottom: 10,
-  },
-  warningTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#e65100',
-  },
-  warningText: {
-    fontSize: 12,
-    color: '#bf360c',
-    lineHeight: 16,
-    marginTop: 2,
-  },
-  phaseHint: {
-    fontSize: 12,
-    color: '#78909c',
-    lineHeight: 17,
-    marginBottom: 10,
-  },
-  casualtiesBlock: {
-    backgroundColor: '#fffde7',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#fdd835',
-    padding: 10,
-    marginBottom: 12,
-  },
-  casualtiesLine: {
-    fontSize: 12,
-    color: '#5d4037',
-    marginBottom: 2,
-  },
-  casualtiesSelected: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#4e342e',
-    marginTop: 4,
-  },
-  retreatBlock: {
+  retreat: {
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 4,
     backgroundColor: '#e8eaf6',
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#c5cae9',
   },
   retreatNote: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#283593',
-    marginBottom: 6,
+    marginBottom: 4,
   },
-  retreatRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  retreatCard: {
     backgroundColor: '#ffffff',
     borderRadius: 10,
     padding: 8,
-    marginBottom: 6,
-  },
-  retreatInfo: {
-    flex: 1,
+    marginRight: 8,
+    minWidth: 132,
+    alignItems: 'center',
   },
   retreatName: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
     color: '#263238',
+    maxWidth: 120,
   },
   retreatMeta: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#78909c',
+    marginBottom: 4,
   },
   retreatResult: {
-    fontSize: 11,
-    marginTop: 2,
+    fontSize: 10,
+    marginTop: 3,
   },
   retreatOk: {
     color: '#2e7d32',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   retreatFail: {
     color: '#c62828',
+    fontWeight: '700',
+  },
+  retreatHint: {
+    fontSize: 10,
+    color: '#90a4ae',
+    marginTop: 3,
+  },
+  controls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    // Запас под системную панель навигации: бой идёт до самого низа экрана.
+    paddingBottom: Platform.OS === 'android' ? 14 : 24,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  casualtiesText: {
+    flex: 1,
+    fontSize: 10,
+    color: '#5d4037',
+    lineHeight: 13,
+    marginRight: 8,
+  },
+  rosterButton: {
+    borderWidth: 1,
+    borderColor: '#90a4ae',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginRight: 8,
+  },
+  rosterButtonText: {
+    fontSize: 12,
+    color: '#546e7a',
     fontWeight: '600',
   },
-  primaryButton: {
+  primary: {
+    flex: 1,
     backgroundColor: '#1976d2',
     borderRadius: 8,
     paddingVertical: 11,
     alignItems: 'center',
-    marginTop: 8,
   },
   primaryDisabled: {
     backgroundColor: '#b0bec5',
   },
-  primaryButtonText: {
+  primaryText: {
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
   },
-  bottomButton: {
-    marginTop: 16,
-  },
-  sideTitleAttacker: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#c62828',
-    marginBottom: 6,
-  },
-  sideTitleDefender: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1565c0',
-    marginBottom: 6,
-  },
-  empty: {
-    fontSize: 12,
-    color: '#90a4ae',
-    marginBottom: 8,
-  },
-  divider: {
+  secondary: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#1976d2',
+    borderRadius: 8,
+    paddingVertical: 11,
     alignItems: 'center',
-    marginVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#cfd8dc',
-    borderStyle: 'dashed',
   },
-  dividerText: {
-    marginTop: -8,
-    backgroundColor: '#f5f5f5',
-    paddingHorizontal: 8,
-    fontSize: 10,
-    color: '#90a4ae',
-    textTransform: 'uppercase',
+  secondaryText: {
+    color: '#1565c0',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 30, 0.55)',
+    justifyContent: 'center',
+  },
+  overlayContent: {
+    paddingHorizontal: 14,
+    paddingVertical: 24,
   },
 });
 

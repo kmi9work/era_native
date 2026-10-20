@@ -11,10 +11,10 @@
  *     авто-выбор самых слабых потерь с ручной правкой, анимация удара,
  *     отступление на 4–6 и новый раунд.
  *
- * На бэкенд пишется только одно — уничтожение разбитых армий (DELETE /armies/:id),
- * и только после подтверждения мастером. Захват города и присоединение
- * государства экран показывает итогом: API захвата города нет (есть захват
- * региона целиком), поэтому мастер оформляет это в веб-админке.
+ * На бэкенд уходят два действия, и оба — только после подтверждения мастером:
+ * уничтожение разбитых армий (DELETE /armies/:id) и передача региона победителю
+ * (PATCH /regions/:id/captured_by), когда взята столица государства. Захвата
+ * отдельного города в API нет: город принадлежит региону.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ApiService from '../../services/api';
@@ -24,6 +24,8 @@ import { queryKeys } from '../../data/keys';
 import { useAllCountries } from '../../data/hooks/useCountries';
 import { useArmies } from '../../data/hooks/useArmies';
 import { useRegions, useSettlements } from '../../data/hooks/useSettlements';
+import { buildRoundScene, type SceneTroop } from '../battles/scene/events';
+import { useScenePlayer } from '../battles/scene/useScenePlayer';
 import {
   armyCountryId,
   armyModifier,
@@ -47,7 +49,11 @@ import type { Army, Settlement } from '../../types';
 
 export type BattleSide = 'attacker' | 'defender';
 export type BattleStep = 'place' | 'armies' | 'buffs' | 'battle';
-export type BattlePhase = 'rolling' | 'casualties' | 'animating' | 'retreat' | 'finished';
+/**
+ * Фазы боя. `playing` — сцена проигрывает раунд (удары, потери, лента);
+ * время шагов держит `useScenePlayer`, а не таймеры этого хука.
+ */
+export type BattlePhase = 'rolling' | 'casualties' | 'playing' | 'retreat' | 'finished';
 export type BattleOutcome =
   | 'attackers_destroyed'
   | 'defenders_destroyed'
@@ -93,7 +99,6 @@ export interface AvailableArmy {
 
 const DIE_SPIN_MS = 700;
 const ROLL_STAGGER_MS = 140;
-const CASUALTY_ANIMATION_MS = 900;
 const MAX_ARMY_MODIFIER = 3;
 
 const sideLabel = (side: BattleSide) => (side === 'attacker' ? 'Атакующие' : 'Защищающиеся');
@@ -130,7 +135,18 @@ export function useBattleLogic() {
   const [busy, setBusy] = useState(false);
   const [roundMessage, setRoundMessage] = useState<string | null>(null);
   const [annexationChoice, setAnnexationChoice] = useState<number | null>(null);
-  const [annexationDone, setAnnexationDone] = useState(false);
+  /**
+   * Итог передачи региона. Хранится снимком, а не флагом: после успеха слой данных
+   * перезапрашивает регионы, регион уже принадлежит победителю, и пересчитанный
+   * `annexation` теряет список стран-победителей — текст итога должен пережить это.
+   */
+  const [annexationResult, setAnnexationResult] = useState<{
+    regionName: string;
+    countryId: number;
+    countryName: string;
+  } | null>(null);
+  const [annexationBusy, setAnnexationBusy] = useState(false);
+  const [annexationError, setAnnexationError] = useState<string | null>(null);
 
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const uidRef = useRef(0);
@@ -165,6 +181,58 @@ export function useBattleLogic() {
     const timer = setTimeout(fn, delay);
     timersRef.current.push(timer);
   }, []);
+
+  // ─── Сцена раунда ─────────────────────────────────────────────────────────
+
+  /** Потери, подтверждённые мастером: применяются, когда сцена доиграла. */
+  const pendingVictimsRef = useRef<{ attacker: string[]; defender: string[] } | null>(null);
+
+  /**
+   * Применить подтверждённые потери. Вызывается проигрывателем сцены ровно один
+   * раз в конце (или сразу при «Пропустить»), поэтому фишки успевают уехать до
+   * того, как отряды исчезнут из состояния.
+   */
+  const applyCasualties = useCallback(() => {
+    const applied = pendingVictimsRef.current;
+    if (!applied) return;
+    pendingVictimsRef.current = null;
+
+    const removed = new Set([...applied.attacker, ...applied.defender]);
+    const next = armiesRef.current.map(army => ({
+      ...army,
+      troops: army.troops.filter(troop => !removed.has(troop.uid)),
+    }));
+
+    const present = (side: BattleSide) =>
+      next.filter(army => army.side === side && !army.retreated && army.troops.length > 0);
+    const troopsLeft = (side: BattleSide) =>
+      next.filter(army => army.side === side).reduce((sum, army) => sum + army.troops.length, 0);
+
+    setBattleArmies(next);
+    setRolls({});
+    setSpinning({});
+    setHits({ attacker: 0, defender: 0 });
+    setVictims({ attacker: [], defender: [] });
+
+    if (present('attacker').length === 0 || present('defender').length === 0) {
+      const attackerGone = present('attacker').length === 0;
+      if (attackerGone) {
+        setOutcome(troopsLeft('attacker') === 0 ? 'attackers_destroyed' : 'attackers_retreated');
+      } else {
+        setOutcome(troopsLeft('defender') === 0 ? 'defenders_destroyed' : 'defenders_retreated');
+      }
+      setPhase('finished');
+    } else {
+      setPhase('retreat');
+      setRoundMessage(null);
+    }
+  }, []);
+
+  const scene = useScenePlayer({ onComplete: applyCasualties });
+  /** Стабильные ссылки на действия сцены: нужны в зависимостях useCallback. */
+  const resetScene = scene.reset;
+  const startScene = scene.start;
+  const skipSceneAction = scene.skip;
 
   // ─── Справочники ─────────────────────────────────────────────────────────
 
@@ -420,6 +488,8 @@ export function useBattleLogic() {
 
   const resetBattleState = useCallback(() => {
     runRef.current += 1;
+    pendingVictimsRef.current = null;
+    resetScene();
     setRolls({});
     setSpinning({});
     setRetreatSpinning({});
@@ -433,8 +503,10 @@ export function useBattleLogic() {
     setDeleteError(null);
     setRoundMessage(null);
     setAnnexationChoice(null);
-    setAnnexationDone(false);
-  }, []);
+    setAnnexationResult(null);
+    setAnnexationBusy(false);
+    setAnnexationError(null);
+  }, [resetScene]);
 
   /** Пехота от города: по одной в каждую защищающуюся армию (только в городском бою). */
   const ensureCityInfantry = useCallback(() => {
@@ -629,6 +701,25 @@ export function useBattleLogic() {
     [participants, phase, scheduleRoll],
   );
 
+  /** Есть ли ещё не брошенные отряды: по этому признаку активна кнопка «Ход». */
+  const canRollAll = useMemo(
+    () => phase === 'rolling' && participants.some(item => rolls[item.troop.uid] === undefined),
+    [participants, phase, rolls],
+  );
+
+  /**
+   * «Ход» — один жест мастера на весь раунд: волна кубиков по всем отрядам обеих
+   * сторон (шаг между кубиками задаёт `scheduleRoll`). Дальше попадания считает
+   * существующий эффект, а бой показывает сцена.
+   */
+  const rollAll = useCallback(() => {
+    if (phase !== 'rolling') return;
+    const uids = participants
+      .filter(item => rollsRef.current[item.troop.uid] === undefined)
+      .map(item => item.troop.uid);
+    scheduleRoll(uids, 0);
+  }, [participants, phase, scheduleRoll]);
+
   // Когда все кубики обеих сторон легли — считаем попадания и авто-выбор потерь.
   useEffect(() => {
     if (step !== 'battle' || phase !== 'rolling') return;
@@ -699,50 +790,62 @@ export function useBattleLogic() {
     victims.attacker.length === Math.min(hits.defender, troopsBySide.attacker) &&
     victims.defender.length === Math.min(hits.attacker, troopsBySide.defender);
 
+  /**
+   * Подтверждение потерь: отряды НЕ удаляются сразу — сначала сцена проигрывает
+   * удары и смерти (`useScenePlayer`), а по её завершении `applyCasualties`
+   * применяет потери. Так фишка успевает уехать и погаснуть до исчезновения.
+   */
   const confirmCasualties = useCallback(() => {
     if (phase !== 'casualties' || !victimsReady) return;
     const applied = { attacker: [...victims.attacker], defender: [...victims.defender] };
-    const removed = new Set([...applied.attacker, ...applied.defender]);
-    setPhase('animating');
-    const run = runRef.current;
+    pendingVictimsRef.current = applied;
 
-    schedule(() => {
-      if (runRef.current !== run) return;
-      const next = armiesRef.current.map(army => ({
-        ...army,
-        troops: army.troops.filter(troop => !removed.has(troop.uid)),
-      }));
+    const snapshot = (side: BattleSide): SceneTroop[] =>
+      battleArmies
+        .filter(army => army.side === side && !army.retreated)
+        .flatMap(army =>
+          army.troops.map(troop => {
+            const raw = rolls[troop.uid];
+            const value = raw === undefined ? null : effectiveFor(army, raw);
+            return {
+              uid: troop.uid,
+              side,
+              armyUid: army.uid,
+              armyName: army.name,
+              troopName: troop.name,
+              kind: troop.kind,
+              value,
+              hit: value !== null && isHit(troop.kind, value),
+            };
+          }),
+        );
 
-      const present = (side: BattleSide) =>
-        next.filter(army => army.side === side && !army.retreated && army.troops.length > 0);
-      const troopsLeft = (side: BattleSide) =>
-        next
-          .filter(army => army.side === side)
-          .reduce((sum, army) => sum + army.troops.length, 0);
+    const built = buildRoundScene({
+      round,
+      attackers: snapshot('attacker'),
+      defenders: snapshot('defender'),
+      hits,
+      victims: applied,
+    });
 
-      setBattleArmies(next);
-      setRolls({});
-      setSpinning({});
-      setHits({ attacker: 0, defender: 0 });
-      setVictims({ attacker: [], defender: [] });
+    setPhase('playing');
+    startScene(built.steps);
+  }, [
+    battleArmies,
+    effectiveFor,
+    hits,
+    phase,
+    rolls,
+    round,
+    startScene,
+    victims,
+    victimsReady,
+  ]);
 
-      if (present('attacker').length === 0 || present('defender').length === 0) {
-        const attackerGone = present('attacker').length === 0;
-        const defenderGone = present('defender').length === 0;
-        if (attackerGone && defenderGone) {
-          setOutcome(troopsLeft('attacker') === 0 ? 'attackers_destroyed' : 'attackers_retreated');
-        } else if (attackerGone) {
-          setOutcome(troopsLeft('attacker') === 0 ? 'attackers_destroyed' : 'attackers_retreated');
-        } else if (defenderGone) {
-          setOutcome(troopsLeft('defender') === 0 ? 'defenders_destroyed' : 'defenders_retreated');
-        }
-        setPhase('finished');
-      } else {
-        setPhase('retreat');
-        setRoundMessage(null);
-      }
-    }, CASUALTY_ANIMATION_MS);
-  }, [phase, schedule, victims, victimsReady]);
+  const skipScene = useCallback(() => {
+    if (phase !== 'playing') return;
+    skipSceneAction();
+  }, [phase, skipSceneAction]);
 
   // ─── Отступление ─────────────────────────────────────────────────────────
 
@@ -832,37 +935,51 @@ export function useBattleLogic() {
   }, [armiesToDestroy, busy, outcomeConfirmed]);
 
   /**
-   * Присоединение государства: столица павшего государства и у него не осталось
-   * армий. Экран только предлагает решение — само присоединение оформляется
-   * в веб-админке (API захвата города нет).
+   * Присоединение региона: взята столица государства, значит регион столицы можно
+   * передать победителю. Победитель — государство атакующих армий; если союзников
+   * было несколько, мастер выбирает страну. Отдельного API захвата города нет,
+   * поэтому передаётся регион целиком (`PATCH /regions/:id/captured_by`).
+   *
+   * Армии защищающегося на бэкенде не блокируют предложение: по правилам, пока
+   * армии противника не уничтожены, взятие столицы — оккупация, и мастер решает
+   * сам (экран показывает, сколько армий у государства осталось).
    */
   const annexation = useMemo(() => {
     if (outcome !== 'defenders_destroyed' || placeKind !== 'city' || !isCapital) return null;
     if (defendingCountryId === null) return null;
+    const regionId = selectedSettlement?.region_id ?? null;
+    if (regionId === null) return null;
 
+    // Страны-победители: государства атакующих армий, кроме самого защищающегося
+    // (бой внутри одного государства регион никуда не передаёт).
+    const attackerCountryIds: number[] = [];
+    attackers.forEach(army => {
+      const id = army.countryId;
+      if (id === null || id === defendingCountryId) return;
+      if (!attackerCountryIds.includes(id)) attackerCountryIds.push(id);
+    });
+
+    // Армии защищающегося государства, которые бой не уничтожил (для справки мастера).
     const destroyedIds = new Set(
       battleArmies
         .filter(army => army.side === 'defender' && army.armyId !== null)
         .map(army => army.armyId as number),
     );
-    const remaining = (armiesQuery.data || []).filter(army => {
+    const remainingArmyCount = (armiesQuery.data || []).filter(army => {
       if (destroyedIds.has(army.id)) return false;
       return armyCountryId(army, regionCountryId) === defendingCountryId;
-    });
-    if (remaining.length > 0) return null;
+    }).length;
 
-    const attackerCountryIds: number[] = [];
-    attackers.forEach(army => {
-      if (army.countryId !== null && !attackerCountryIds.includes(army.countryId)) {
-        attackerCountryIds.push(army.countryId);
-      }
-    });
+    const region = (regionsQuery.data || []).find(item => item.id === regionId) || null;
 
     return {
+      regionId,
+      regionName: region?.name || `регион #${regionId}`,
       defendingCountryId,
       defendingCountryName: countryName(defendingCountryId),
       capitalName: selectedSettlement?.name || 'столица',
       attackerCountries: attackerCountryIds.map(id => ({ id, name: countryName(id) })),
+      remainingArmyCount,
     };
   }, [
     armiesQuery.data,
@@ -874,17 +991,63 @@ export function useBattleLogic() {
     outcome,
     placeKind,
     regionCountryId,
+    regionsQuery.data,
     selectedSettlement,
   ]);
 
-  const confirmAnnexation = useCallback(() => {
-    setAnnexationDone(true);
+  /** Кому передаём регион: выбор мастера, а если победитель один — сразу он. */
+  const annexationTarget = useMemo(() => {
+    if (!annexation) return null;
+    if (annexationChoice !== null) return annexationChoice;
+    return annexation.attackerCountries.length === 1 ? annexation.attackerCountries[0].id : null;
+  }, [annexation, annexationChoice]);
+
+  const chooseAnnexationCountry = useCallback((countryId: number) => {
+    setAnnexationChoice(countryId);
+    setAnnexationError(null);
   }, []);
+
+  /**
+   * Передать регион победителю. Решение мастера уходит на бэкенд тем же вызовом,
+   * что делает веб-админка ([1] — войной), поэтому регион переходит стране сразу
+   * и оформлять его в админке больше не нужно.
+   */
+  const confirmAnnexation = useCallback(async (): Promise<number | null> => {
+    if (!annexation || annexationTarget === null || annexationResult || annexationBusy) return null;
+    const target = annexationTarget;
+    const regionName = annexation.regionName;
+    setAnnexationBusy(true);
+    setAnnexationError(null);
+    try {
+      await ApiService.captureRegion(annexation.regionId, target, true);
+      // Снимок итога — до инвалидации: после неё регион уже чужой и `annexation`
+      // пересчитается без стран-победителей.
+      setAnnexationResult({ regionName, countryId: target, countryName: countryName(target) });
+      queryClient.invalidate([
+        queryKeys.regions(),
+        queryKeys.settlements(),
+        queryKeys.allCountries(),
+        queryKeys.armies(),
+      ]);
+      return target;
+    } catch (error) {
+      setAnnexationError(getErrorMessage(error, 'Присоединение региона'));
+      return null;
+    } finally {
+      setAnnexationBusy(false);
+    }
+  }, [annexation, annexationBusy, annexationResult, annexationTarget, countryName]);
+
+  const annexationDone = annexationResult !== null;
 
   const cityCaptureNote = useMemo(() => {
     if (outcome !== 'defenders_destroyed' || placeKind !== 'city' || !selectedSettlement) return null;
-    return `Город ${selectedSettlement.name} захвачен атакующими. Захват города оформляется в веб-админке: город принадлежит региону, отдельного API захвата города нет.`;
-  }, [outcome, placeKind, selectedSettlement]);
+    if (annexation || annexationResult) return null;
+    if (isCapital) {
+      return `Столица ${selectedSettlement.name} взята, но государство нападающих не определено — регион передаётся в веб-админке.`;
+    }
+    return `Город ${selectedSettlement.name} взят. Столица государства не взята — регион не переходит; захват города оформляется в веб-админке.`;
+  }, [annexation, annexationResult, isCapital, outcome, placeKind, selectedSettlement]);
 
   // ─── Значения для карточек ───────────────────────────────────────────────
 
@@ -908,6 +1071,9 @@ export function useBattleLogic() {
     },
     [effectiveFor, fortressBonusFor, modifierFor, rolls, spinning],
   );
+
+  /** Строки ленты боя: тексты уже проигранных шагов сцены. */
+  const sceneLog = useMemo(() => scene.applied.map(step => step.text), [scene.applied]);
 
   return {
     // данные
@@ -972,13 +1138,23 @@ export function useBattleLogic() {
     roundMessage,
     annexation,
     annexationChoice,
-    setAnnexationChoice,
+    setAnnexationChoice: chooseAnnexationCountry,
+    annexationTarget,
+    annexationResult,
     annexationDone,
+    annexationBusy,
+    annexationError,
     confirmAnnexation,
     cityCaptureNote,
     armiesToDestroy,
     rollTroop,
     rollArmy,
+    rollAll,
+    canRollAll,
+    /** Сцена раунда: шаги, активный шаг, скорость, «Пропустить». */
+    scene,
+    sceneLog,
+    skipScene,
     toggleVictim,
     confirmCasualties,
     retreatArmy,

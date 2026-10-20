@@ -242,6 +242,20 @@ class ApiService {
     await this.api.delete(`/armies/${armyId}.json`);
   }
 
+  /**
+   * Передать регион государству — тот же вызов, что делает веб-админка
+   * («Политика» → передача региона, `era_front/.../CaptureRegion.vue`):
+   * `PATCH /regions/:id/captured_by.json?country_id=&how=`.
+   * `how`: 1 — войной, 0 — миром. Бэкенд отвечает 204 без тела.
+   * Бонус Великому князю (`grand_prince_bonus`) клиент не запрашивает: в вебе это
+   * отдельный вопрос мастеру, здесь решение по умолчанию — без бонуса.
+   */
+  async captureRegion(regionId: number, countryId: number, byWar = true): Promise<void> {
+    await this.api.patch(`/regions/${regionId}/captured_by.json`, null, {
+      params: { country_id: countryId, how: byWar ? 1 : 0 },
+    });
+  }
+
   // Все поселения (город/столица): для выбора места сражения
   async getSettlements(signal?: AbortSignal): Promise<Settlement[]> {
     const response = await this.api.get('/settlements.json', { params: { all: 1 }, signal });

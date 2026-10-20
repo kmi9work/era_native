@@ -75,6 +75,7 @@ jest.mock('../src/services/api', () => ({
     getRegions: jest.fn(async () => regions),
     getCountries: jest.fn(async () => countries),
     deleteArmy: jest.fn(async () => undefined),
+    captureRegion: jest.fn(async () => undefined),
   },
 }));
 
@@ -201,12 +202,34 @@ describe('экран «Сражения»', () => {
     press(tree, 'Начать бой');
     expect(screenTexts(tree)).toEqual(expect.arrayContaining(['Раунд 1', 'Атакующие', 'Защищающиеся']));
 
-    // Город добавил пехоту защищающимся: отряд-карточка с подписью «Пехота (город)».
+    // Город добавил пехоту защищающимся: на сцене фишка с подписью «Пехота (город)».
     expect(screenTexts(tree)).toContain('Пехота (город)');
-    // Пушка на карточке отмечена как не участвующая в бою.
+    // Сцена вместо таблицы: фишка пушки помечена как не участвующая в бросках.
+    const tokenLabels = tree.root
+      .findAll(node => typeof node.props?.accessibilityLabel === 'string')
+      .map(node => String(node.props.accessibilityLabel));
+    expect(
+      tokenLabels.some(label => label.includes('Пушка') && label.includes('не участвует в бою')),
+    ).toBe(true);
+    // Управление боем: один жест на раунд, состав и скорость показа.
     expect(screenTexts(tree)).toEqual(
-      expect.arrayContaining(['не участвует в бою', 'без\nкубика']),
+      expect.arrayContaining(['Ход', 'Состав', 'x1', 'x2']),
     );
+
+    // Бой идёт на весь экран: шапка экрана «Сражения» на этом шаге скрыта,
+    // иначе сцена висела бы под синей полосой вместо всего экрана.
+    expect(screenTexts(tree)).not.toContain('Сражения');
+
+    // Вернуться к баффам можно из табло — шапки, где была стрелка, больше нет.
+    const backToBuffs = tree.root
+      .findAll(node => node.props?.accessibilityLabel === 'Вернуться к баффам')
+      .find(node => typeof node.props?.onPress === 'function');
+    expect(backToBuffs).toBeTruthy();
+    act(() => {
+      backToBuffs!.props.onPress();
+    });
+    expect(screenTexts(tree)).toContain('Баффы и дебаффы армий');
+    expect(screenTexts(tree)).toContain('Сражения');
 
     act(() => {
       tree.unmount();

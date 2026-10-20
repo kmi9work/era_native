@@ -20,6 +20,7 @@ jest.mock('../src/services/api', () => ({
   __esModule: true,
   default: {
     deleteArmy: jest.fn(() => Promise.resolve()),
+    captureRegion: jest.fn(() => Promise.resolve()),
     getArmies: jest.fn(),
     getSettlements: jest.fn(),
     getRegions: jest.fn(),
@@ -144,6 +145,7 @@ describe('useBattleLogic', () => {
       ],
     };
     (ApiService.deleteArmy as jest.Mock).mockClear();
+    (ApiService.captureRegion as jest.Mock).mockClear();
   });
 
   afterEach(() => {
@@ -222,8 +224,11 @@ describe('useBattleLogic', () => {
     expect(hook.current.victimsReady).toBe(true);
 
     act(() => hook.current.confirmCasualties());
+    // Потери применяются не сразу: сначала сцена проигрывает удары и смерти.
+    expect(hook.current.phase).toBe('playing');
+    expect(hook.current.scene.steps.length).toBeGreaterThanOrEqual(3);
     act(() => {
-      jest.advanceTimersByTime(1000);
+      jest.advanceTimersByTime(4000);
     });
 
     expect(hook.current.phase).toBe('finished');
@@ -231,9 +236,13 @@ describe('useBattleLogic', () => {
     expect(hook.current.attackers[0].troops).toHaveLength(1);
     expect(hook.current.defenders[0].troops).toHaveLength(0);
 
-    // Город взят, но у Твери ещё есть армия на бэкенде — присоединение не предлагается.
-    expect(hook.current.annexation).toBeNull();
-    expect(hook.current.cityCaptureNote).toContain('Тверь');
+    // Столица взята — регион предлагается присоединить, хотя у Твери ещё есть армия
+    // на бэкенде: экран только сообщает об этом («по правилам это оккупация»).
+    expect(hook.current.annexation?.regionId).toBe(20);
+    expect(hook.current.annexation?.regionName).toBe('Тверская земля');
+    expect(hook.current.annexation?.remainingArmyCount).toBe(1);
+    // Заметка про захват города не нужна: регион передаётся кнопкой панели.
+    expect(hook.current.cityCaptureNote).toBeNull();
 
     // У гарнизона нет армии на бэкенде — удалять нечего.
     expect(hook.current.armiesToDestroy.map(item => item.armyId)).toEqual([null]);
@@ -274,7 +283,7 @@ describe('useBattleLogic', () => {
     expect(hook.current.hits).toEqual({ attacker: 2, defender: 0 });
     act(() => hook.current.confirmCasualties());
     act(() => {
-      jest.advanceTimersByTime(1000);
+      jest.advanceTimersByTime(4000);
     });
 
     // 3 отряда защитников против 2 попаданий: бой не закончен, армии могут отступать.
@@ -286,7 +295,7 @@ describe('useBattleLogic', () => {
     hook.unmount();
   });
 
-  it('взятие столицы у государства без других армий предлагает присоединение', async () => {
+  it('взятие столицы предлагает присоединить регион и передаёт его победителю', async () => {
     // У Твери не осталось армий на бэкенде — в списке только нападающие.
     mockData.armies = [army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота'])];
     const hook = renderHook(() => useBattleLogic());
@@ -300,7 +309,7 @@ describe('useBattleLogic', () => {
     act(() => hook.current.goNext());
 
     const dice = [0.99, 0, 0.99];
-    act(() => hook.current.setRng(() => dice.shift() ?? 0));
+    act(() => hook.current.setRng(() => dice.shift() ?? 0.99));
     act(() => hook.current.rollArmy(hook.current.attackers[0].uid));
     act(() => hook.current.rollArmy(hook.current.defenders[0].uid));
     act(() => {
@@ -309,15 +318,128 @@ describe('useBattleLogic', () => {
 
     act(() => hook.current.confirmCasualties());
     act(() => {
-      jest.advanceTimersByTime(1000);
+      jest.advanceTimersByTime(4000);
     });
 
     expect(hook.current.outcome).toBe('defenders_destroyed');
-    expect(hook.current.annexation).not.toBeNull();
     expect(hook.current.annexation?.defendingCountryName).toBe('Тверь');
-    // Нападающее государство мастер выбирает сам, если их несколько.
-    expect(hook.current.annexation?.attackerCountries.length).toBeGreaterThan(0);
     expect(hook.current.annexation?.capitalName).toBe('Тверь');
+    // Регион берётся у взятой столицы, а не у страны целиком.
+    expect(hook.current.annexation?.regionId).toBe(20);
+    expect(hook.current.annexation?.regionName).toBe('Тверская земля');
+    expect(hook.current.annexation?.attackerCountries).toEqual([{ id: 1, name: 'Русь' }]);
+    // Победитель один — страну-получателя мастер не выбирает.
+    expect(hook.current.annexationTarget).toBe(1);
+
+    await act(async () => {
+      await hook.current.confirmAnnexation();
+    });
+    // Тот же вызов, что делает веб-админка: регион 20 → государство 1, войной.
+    expect(ApiService.captureRegion).toHaveBeenCalledWith(20, 1, true);
+    expect(hook.current.annexationDone).toBe(true);
+    // Итог хранится снимком: после перезапроса регионов регион уже чужой и
+    // annexation пересчитается, а текст «кому передан» должен остаться.
+    expect(hook.current.annexationResult).toEqual({
+      regionName: 'Тверская земля',
+      countryId: 1,
+      countryName: 'Русь',
+    });
+    expect(hook.current.annexationError).toBeNull();
+    expect(hook.current.cityCaptureNote).toBeNull();
+
+    // Повторное нажатие кнопки не отправляет второй запрос.
+    await act(async () => {
+      await hook.current.confirmAnnexation();
+    });
+    expect(ApiService.captureRegion).toHaveBeenCalledTimes(1);
+
+    hook.unmount();
+  });
+
+  it('если воевали союзники, регион уходит выбранной стране', async () => {
+    // Союзники: Русь (пехота) и Казанское ханство (пушка — в бросках не участвует).
+    mockData.armies = [
+      army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота']),
+      army(3, 'Казанцы', 6, 'Казанское ханство', ['Пушка']),
+    ];
+    const hook = renderHook(() => useBattleLogic());
+
+    act(() => hook.current.setPlaceKind('city'));
+    act(() => hook.current.selectCountry(2));
+    act(() => hook.current.selectSettlement(10));
+    act(() => hook.current.goNext());
+    act(() => hook.current.addArmy(mockData.armies[0], 'attacker'));
+    act(() => hook.current.addArmy(mockData.armies[1], 'attacker'));
+    act(() => hook.current.goNext());
+    act(() => hook.current.goNext());
+
+    const dice = [0.99, 0, 0.99];
+    act(() => hook.current.setRng(() => dice.shift() ?? 0.99));
+    act(() => hook.current.rollArmy(hook.current.attackers[0].uid));
+    act(() => hook.current.rollArmy(hook.current.defenders[0].uid));
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    act(() => hook.current.confirmCasualties());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+
+    expect(hook.current.outcome).toBe('defenders_destroyed');
+    expect(hook.current.annexation?.attackerCountries).toEqual([
+      { id: 1, name: 'Русь' },
+      { id: 6, name: 'Казанское ханство' },
+    ]);
+    // Пока страна не выбрана, передавать регион некому.
+    expect(hook.current.annexationTarget).toBeNull();
+    await act(async () => {
+      await hook.current.confirmAnnexation();
+    });
+    expect(ApiService.captureRegion).not.toHaveBeenCalled();
+
+    act(() => hook.current.setAnnexationChoice(6));
+    expect(hook.current.annexationTarget).toBe(6);
+    await act(async () => {
+      await hook.current.confirmAnnexation();
+    });
+    expect(ApiService.captureRegion).toHaveBeenCalledWith(20, 6, true);
+    expect(hook.current.annexationDone).toBe(true);
+
+    hook.unmount();
+  });
+
+  it('ошибка бэкенда при присоединении региона не закрывает предложение', async () => {
+    mockData.armies = [army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота'])];
+    (ApiService.captureRegion as jest.Mock).mockRejectedValueOnce(new Error('boom'));
+    const hook = renderHook(() => useBattleLogic());
+
+    act(() => hook.current.setPlaceKind('city'));
+    act(() => hook.current.selectCountry(2));
+    act(() => hook.current.selectSettlement(10));
+    act(() => hook.current.goNext());
+    act(() => hook.current.addArmy(mockData.armies[0], 'attacker'));
+    act(() => hook.current.goNext());
+    act(() => hook.current.goNext());
+
+    const dice = [0.99, 0, 0.99];
+    act(() => hook.current.setRng(() => dice.shift() ?? 0.99));
+    act(() => hook.current.rollArmy(hook.current.attackers[0].uid));
+    act(() => hook.current.rollArmy(hook.current.defenders[0].uid));
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    act(() => hook.current.confirmCasualties());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+
+    await act(async () => {
+      await hook.current.confirmAnnexation();
+    });
+    expect(hook.current.annexationDone).toBe(false);
+    expect(hook.current.annexationError).toBeTruthy();
+    // Кнопка остаётся: мастер может повторить передачу региона.
+    expect(hook.current.annexationTarget).toBe(1);
 
     hook.unmount();
   });
@@ -343,7 +465,7 @@ describe('useBattleLogic', () => {
     expect(hook.current.hits).toEqual({ attacker: 0, defender: 1 });
     act(() => hook.current.confirmCasualties());
     act(() => {
-      jest.advanceTimersByTime(1000);
+      jest.advanceTimersByTime(4000);
     });
 
     expect(hook.current.outcome).toBe('attackers_destroyed');
@@ -405,6 +527,28 @@ describe('useBattleLogic', () => {
 
     expect(hook.current.hits.attacker).toBe(2);
     expect(hook.current.phase).toBe('casualties');
+
+    hook.unmount();
+  });
+
+  it('«Ход» бросает все отряды обеих сторон и доводит раунд до потерь', () => {
+    const hook = renderHook(() => useBattleLogic());
+    setupFieldBattle(hook);
+
+    // Пехота попадает на 5–6: все броски по 6 — бьют обе стороны.
+    act(() => hook.current.setRng(() => 0.99));
+    expect(hook.current.canRollAll).toBe(true);
+
+    act(() => hook.current.rollAll());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+
+    expect(hook.current.phase).toBe('casualties');
+    expect(hook.current.hits.attacker).toBeGreaterThan(0);
+    expect(hook.current.hits.defender).toBeGreaterThan(0);
+    // Все кубики легли — повторная волна не нужна.
+    expect(hook.current.canRollAll).toBe(false);
 
     hook.unmount();
   });
