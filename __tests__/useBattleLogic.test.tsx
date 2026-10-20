@@ -9,11 +9,18 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
-var mockData: { armies: any[]; settlements: any[]; regions: any[]; countries: any[] } = {
+var mockData: {
+  armies: any[];
+  settlements: any[];
+  regions: any[];
+  countries: any[];
+  players: any[];
+} = {
   armies: [],
   settlements: [],
   regions: [],
   countries: [],
+  players: [],
 };
 
 jest.mock('../src/services/api', () => ({
@@ -21,6 +28,8 @@ jest.mock('../src/services/api', () => ({
   default: {
     deleteArmy: jest.fn(() => Promise.resolve()),
     captureRegion: jest.fn(() => Promise.resolve()),
+    setSettlementOwner: jest.fn(() => Promise.resolve()),
+    getPlayers: jest.fn(),
     getArmies: jest.fn(),
     getSettlements: jest.fn(),
     getRegions: jest.fn(),
@@ -43,6 +52,19 @@ jest.mock('../src/data/hooks/useArmies', () => ({
 jest.mock('../src/data/hooks/useCountries', () => ({
   useAllCountries: () => ({
     data: mockData.countries,
+    error: undefined,
+    isLoading: false,
+    isFetching: false,
+    isStale: false,
+    updatedAt: Date.now(),
+    isOffline: false,
+    refetch: async () => {},
+  }),
+}));
+
+jest.mock('../src/data/hooks/usePlayers', () => ({
+  usePlayers: () => ({
+    data: mockData.players,
     error: undefined,
     isLoading: false,
     isFetching: false,
@@ -119,6 +141,41 @@ const citySettlement = {
   buildings: [{ id: 1, building_type_name: 'Кремль', building_level_level: 2 }],
 };
 
+const playerOwnedArmy = (
+  id: number,
+  name: string,
+  playerId: number,
+  playerName: string,
+  kinds: string[],
+) => ({
+  ...army(id, name, playerId, playerName, kinds),
+  owner_type: 'Player',
+  owner: { id: playerId, name: playerName, country_id: 1 },
+});
+
+/** Городской бой за столицу с одним нападающим: гарнизон гибнет, город взят. */
+const winCityBattle = (hook: { readonly current: BattleLogic }, settlementId = 10) => {
+  act(() => hook.current.setPlaceKind('city'));
+  act(() => hook.current.selectCountry(2));
+  act(() => hook.current.selectSettlement(settlementId));
+  act(() => hook.current.goNext());
+  act(() => hook.current.addArmy(mockData.armies[0], 'attacker'));
+  act(() => hook.current.goNext());
+  act(() => hook.current.goNext());
+
+  const dice = [0.99, 0, 0.99];
+  act(() => hook.current.setRng(() => dice.shift() ?? 0.99));
+  act(() => hook.current.rollArmy(hook.current.attackers[0].uid));
+  act(() => hook.current.rollArmy(hook.current.defenders[0].uid));
+  act(() => {
+    jest.advanceTimersByTime(2000);
+  });
+  act(() => hook.current.confirmCasualties());
+  act(() => {
+    jest.advanceTimersByTime(4000);
+  });
+};
+
 const setupFieldBattle = (hook: { readonly current: BattleLogic }) => {
   act(() => hook.current.setPlaceKind('field'));
   act(() => hook.current.goNext());
@@ -139,6 +196,7 @@ describe('useBattleLogic', () => {
         { id: 6, name: 'Казанское ханство' },
       ],
       settlements: [citySettlement],
+      players: [],
       armies: [
         army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота']),
         army(2, 'Защитники', 2, 'Тверь', ['Пехота']),
@@ -146,6 +204,7 @@ describe('useBattleLogic', () => {
     };
     (ApiService.deleteArmy as jest.Mock).mockClear();
     (ApiService.captureRegion as jest.Mock).mockClear();
+    (ApiService.setSettlementOwner as jest.Mock).mockClear();
   });
 
   afterEach(() => {
@@ -241,8 +300,9 @@ describe('useBattleLogic', () => {
     expect(hook.current.annexation?.regionId).toBe(20);
     expect(hook.current.annexation?.regionName).toBe('Тверская земля');
     expect(hook.current.annexation?.remainingArmyCount).toBe(1);
-    // Заметка про захват города не нужна: регион передаётся кнопкой панели.
-    expect(hook.current.cityCaptureNote).toBeNull();
+    // Взятый город описан отдельным блоком панели итога.
+    expect(hook.current.capturedCity?.settlementId).toBe(10);
+    expect(hook.current.capturedCity?.isCapital).toBe(true);
 
     // У гарнизона нет армии на бэкенде — удалять нечего.
     expect(hook.current.armiesToDestroy.map(item => item.armyId)).toEqual([null]);
@@ -345,7 +405,6 @@ describe('useBattleLogic', () => {
       countryName: 'Русь',
     });
     expect(hook.current.annexationError).toBeNull();
-    expect(hook.current.cityCaptureNote).toBeNull();
 
     // Повторное нажатие кнопки не отправляет второй запрос.
     await act(async () => {
@@ -444,6 +503,96 @@ describe('useBattleLogic', () => {
     hook.unmount();
   });
 
+  it('взятый город: владельца можно снять', async () => {
+    // У города есть владелец-игрок, у нападающей армии — свой игрок-командир.
+    mockData.settlements = [{ ...citySettlement, player: { id: 9, name: 'Прежний владелец' } }];
+    mockData.players = [
+      { id: 5, name: 'Яромир', country_id: 1, country: { id: 1, name: 'Русь' } },
+      { id: 9, name: 'Прежний владелец', country_id: 1, country: { id: 1, name: 'Русь' } },
+    ];
+    mockData.armies = [playerOwnedArmy(3, 'Дружина', 5, 'Яромир', ['Пехота', 'Пехота'])];
+    const hook = renderHook(() => useBattleLogic());
+    winCityBattle(hook);
+
+    expect(hook.current.capturedCity?.owner).toEqual({ id: 9, name: 'Прежний владелец' });
+    // Нападавший идёт первым, хотя по алфавиту он последний.
+    expect(hook.current.ownerChoices.map(item => item.id)).toEqual([5, 9]);
+    expect(hook.current.ownerChoices[0].attacked).toBe(true);
+
+    await act(async () => {
+      await hook.current.removeCityOwner();
+    });
+    expect(ApiService.setSettlementOwner).toHaveBeenCalledWith(10, null);
+    expect(hook.current.cityOwnerResult).toBe('removed');
+    expect(hook.current.cityOwnerError).toBeNull();
+
+    hook.unmount();
+  });
+
+  it('взятый город: владельцем можно назначить любого игрока', async () => {
+    mockData.settlements = [{ ...citySettlement, player: null }];
+    mockData.players = [
+      { id: 5, name: 'Яромир', country_id: 1, country: { id: 1, name: 'Русь' } },
+      { id: 14, name: 'Аким', country_id: 12, country: { id: 12, name: 'Великий Новгород' } },
+    ];
+    mockData.armies = [playerOwnedArmy(3, 'Дружина', 5, 'Яромир', ['Пехота', 'Пехота'])];
+    const hook = renderHook(() => useBattleLogic());
+    winCityBattle(hook);
+
+    expect(hook.current.capturedCity?.owner).toBeNull();
+    // Любой игрок игры, не только нападавшие: новгородский купец тоже в списке.
+    expect(hook.current.ownerChoices.map(item => item.id)).toEqual([5, 14]);
+    expect(hook.current.ownerChoices.find(item => item.id === 14)?.attacked).toBe(false);
+    // Без владельца снимать нечего, но назначать можно.
+    await act(async () => {
+      await hook.current.assignCityOwner(14);
+    });
+    expect(ApiService.setSettlementOwner).toHaveBeenCalledWith(10, 14);
+    expect(hook.current.cityOwnerResult).toBe('assigned');
+
+    hook.unmount();
+  });
+
+  it('ошибка смены владельца не закрывает панель города', async () => {
+    mockData.armies = [army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота'])];
+    (ApiService.setSettlementOwner as jest.Mock).mockRejectedValueOnce(new Error('boom'));
+    const hook = renderHook(() => useBattleLogic());
+    winCityBattle(hook);
+
+    expect(hook.current.capturedCity).not.toBeNull();
+    await act(async () => {
+      await hook.current.assignCityOwner(5);
+    });
+    expect(hook.current.cityOwnerResult).toBeNull();
+    expect(hook.current.cityOwnerError).toBeTruthy();
+    expect(hook.current.capturedCity).not.toBeNull();
+
+    hook.unmount();
+  });
+
+  it('взятый город не столицы: владельцы есть, присоединения региона нет', async () => {
+    mockData.settlements = [
+      {
+        id: 11,
+        name: 'Коломна',
+        settlement_type_id: 1,
+        settlement_type: { id: 1, name: 'Город' },
+        region_id: 20,
+        buildings: [],
+        player: { id: 9, name: 'Прежний владелец' },
+      },
+    ];
+    mockData.armies = [army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота'])];
+    const hook = renderHook(() => useBattleLogic());
+    winCityBattle(hook, 11);
+
+    expect(hook.current.capturedCity?.settlementId).toBe(11);
+    expect(hook.current.capturedCity?.isCapital).toBe(false);
+    expect(hook.current.annexation).toBeNull();
+
+    hook.unmount();
+  });
+
   it('уничтожение армии на бэкенде: разбитые нападающие удаляются по подтверждению', async () => {
     const hook = renderHook(() => useBattleLogic());
     act(() => hook.current.setPlaceKind('field'));
@@ -469,7 +618,8 @@ describe('useBattleLogic', () => {
     });
 
     expect(hook.current.outcome).toBe('attackers_destroyed');
-    expect(hook.current.cityCaptureNote).toBeNull();
+    // Город не взят — блока города и владельцев нет.
+    expect(hook.current.capturedCity).toBeNull();
     expect(hook.current.armiesToDestroy.map(item => item.armyId)).toEqual([2]);
 
     await act(async () => {

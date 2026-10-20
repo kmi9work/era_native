@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { CONFIG } from '../config';
 import { ApiErrorException, normalizeError } from '../data/apiErrors';
-import type { Army, Country, Region, Settlement } from '../types';
+import type { Army, Country, Player, Region, Settlement } from '../types';
 
 // Declare btoa for React Native compatibility
 declare var btoa: (str: string) => string;
@@ -254,6 +254,25 @@ class ApiService {
     await this.api.patch(`/regions/${regionId}/captured_by.json`, null, {
       params: { country_id: countryId, how: byWar ? 1 : 0 },
     });
+  }
+
+  /**
+   * Владелец города — тот же вызов, что в веб-админке
+   * («Политика» → владение, `era_front/.../politics/Ownership.vue`):
+   * `PATCH /settlements/:id.json?settlement[player_id]=<id>`.
+   * `playerId = null` снимает владельца: веб передаёт пустой параметр, Rails
+   * приводит пустую строку к NULL для целочисленной колонки.
+   */
+  async setSettlementOwner(settlementId: number, playerId: number | null): Promise<void> {
+    await this.api.patch(`/settlements/${settlementId}.json`, null, {
+      params: { settlement: { player_id: playerId ?? '' } },
+    });
+  }
+
+  /** Все игроки игры: GET /players.json (нужны для назначения владельца города). */
+  async getPlayers(signal?: AbortSignal): Promise<Player[]> {
+    const response = await this.api.get('/players.json', { signal });
+    return response.data;
   }
 
   // Все поселения (город/столица): для выбора места сражения

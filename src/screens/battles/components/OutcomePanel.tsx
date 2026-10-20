@@ -1,16 +1,19 @@
 /**
- * Итог сражения: подтверждение уничтожения армий, захват города и
- * присоединение региона победителю.
+ * Итог сражения: уничтожение разбитых армий, взятый город и присоединение региона.
  *
- * На бэкенд уходят: DELETE /armies/:id для разбитых армий и
- * PATCH /regions/:id/captured_by — когда взята столица государства, регион
- * столицы передаётся победившей стране (той же кнопкой, что в веб-админке).
- * Если в бою участвовали армии нескольких государств-союзников, мастер выбирает
- * страну-получателя. Захвата отдельного города в API нет: город принадлежит региону.
+ * Три независимых действия мастера после взятия города (порядок произвольный):
+ *  1. снять владельца города (`PATCH /settlements/:id`, player_id пустой);
+ *  2. назначить нового владельца — любого игрока игры, нападавшие в списке первыми;
+ *  3. присоединить регион войной — только для взятой столицы
+ *     (`PATCH /regions/:id/captured_by`), с выбором страны, если воевали союзники.
+ *
+ * Все три вызова — те же, что делает веб-админка. Захвата отдельного города в API
+ * нет: город принадлежит региону, поэтому присоединяется регион целиком.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { BattleLogic } from '../../hooks/useBattleLogic';
+import OwnerPicker from './OwnerPicker';
 
 const OUTCOME_TITLES: Record<string, string> = {
   attackers_destroyed: 'Нападающие разбиты',
@@ -20,6 +23,9 @@ const OUTCOME_TITLES: Record<string, string> = {
 };
 
 const OutcomePanel: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
+  // Список игроков открывается модалом: хуки обязаны идти до раннего возврата.
+  const [ownerPickerVisible, setOwnerPickerVisible] = useState(false);
+
   if (!logic.outcome) return null;
 
   const destroyedSideLabel =
@@ -71,10 +77,66 @@ const OutcomePanel: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
         </View>
       ) : null}
 
-      {logic.cityCaptureNote ? (
+      {logic.capturedCity ? (
         <View style={styles.block}>
-          <Text style={styles.blockTitle}>Город</Text>
-          <Text style={styles.blockLine}>{logic.cityCaptureNote}</Text>
+          <Text style={styles.blockTitle}>Город {logic.capturedCity.name} захвачен</Text>
+          <Text style={styles.blockLine}>
+            Владелец: {logic.capturedCity.owner ? logic.capturedCity.owner.name : 'нет'}
+          </Text>
+          {logic.capturedCity.isCapital ? null : (
+            <Text style={styles.blockLine}>
+              Столица государства не взята — регион не переходит.
+            </Text>
+          )}
+
+          <View style={styles.ownerButtons}>
+            <TouchableOpacity
+              style={[
+                styles.secondaryWide,
+                logic.cityOwnerBusy || !logic.capturedCity.owner ? styles.secondaryWideOff : null,
+              ]}
+              onPress={() => {
+                void logic.removeCityOwner();
+              }}
+              disabled={logic.cityOwnerBusy || !logic.capturedCity.owner}
+            >
+              <Text style={styles.secondaryWideText}>Снять владельца</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.secondaryWide, logic.cityOwnerBusy ? styles.secondaryWideOff : null]}
+              onPress={() => setOwnerPickerVisible(true)}
+              disabled={logic.cityOwnerBusy}
+            >
+              <Text style={styles.secondaryWideText}>Назначить владельца</Text>
+            </TouchableOpacity>
+          </View>
+
+          {logic.annexation && !logic.annexationResult ? (
+            <Text style={styles.blockLine}>
+              Сначала присоедините регион, затем назначайте владельца: при передаче региона
+              другому государству владельцы поселений снимаются.
+            </Text>
+          ) : null}
+
+          {logic.cityOwnerResult ? (
+            <Text style={styles.done}>
+              {logic.cityOwnerResult === 'removed' ? 'Владелец города снят.' : 'Владелец города назначен.'}
+            </Text>
+          ) : null}
+          {logic.cityOwnerError ? (
+            <Text style={styles.error}>Ошибка: {logic.cityOwnerError}</Text>
+          ) : null}
+
+          <OwnerPicker
+            visible={ownerPickerVisible}
+            choices={logic.ownerChoices}
+            busy={logic.cityOwnerBusy}
+            onPick={playerId => {
+              setOwnerPickerVisible(false);
+              void logic.assignCityOwner(playerId);
+            }}
+            onClose={() => setOwnerPickerVisible(false)}
+          />
         </View>
       ) : null}
 
@@ -234,6 +296,30 @@ const styles = StyleSheet.create({
   },
   primaryButtonDisabled: {
     backgroundColor: '#b0bec5',
+  },
+  ownerButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  secondaryWide: {
+    flexGrow: 1,
+    borderWidth: 1,
+    borderColor: '#1976d2',
+    borderRadius: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    marginRight: 8,
+    marginTop: 4,
+  },
+  secondaryWideOff: {
+    borderColor: '#cfd8dc',
+  },
+  secondaryWideText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1565c0',
   },
   pickLine: {
     fontSize: 12,

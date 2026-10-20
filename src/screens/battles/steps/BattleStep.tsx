@@ -216,6 +216,7 @@ const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
               queryKeys.allCountries(),
               queryKeys.settlements(),
               queryKeys.regions(),
+              queryKeys.players(),
             ]}
           />
         }

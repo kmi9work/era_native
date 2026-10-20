@@ -42,6 +42,8 @@ export const queryKeys = {
   settlements: (): QueryKey => ['settlements'],
   /** Регионы с государством: GET /regions.json — страна поселения */
   regions: (): QueryKey => ['regions'],
+  /** Все игроки игры: GET /players.json — назначение владельца города */
+  players: (): QueryKey => ['players'],
 };
 
 /** Строковые представления ключей (для логов). */

@@ -22,6 +22,7 @@ import { getErrorMessage } from '../../data/apiErrors';
 import { queryClient } from '../../data/queryClient';
 import { queryKeys } from '../../data/keys';
 import { useAllCountries } from '../../data/hooks/useCountries';
+import { usePlayers } from '../../data/hooks/usePlayers';
 import { useArmies } from '../../data/hooks/useArmies';
 import { useRegions, useSettlements } from '../../data/hooks/useSettlements';
 import { buildRoundScene, type SceneTroop } from '../battles/scene/events';
@@ -75,6 +76,8 @@ export interface BattleArmy {
   armyId: number | null;
   name: string;
   ownerName: string;
+  /** Игрок-владелец армии (если армия игрока, а не государства): нужен для выбора владельца города. */
+  ownerPlayerId: number | null;
   countryId: number | null;
   side: BattleSide;
   troops: BattleTroop[];
@@ -108,6 +111,7 @@ export function useBattleLogic() {
   const settlementsQuery = useSettlements();
   const regionsQuery = useRegions();
   const allCountriesQuery = useAllCountries();
+  const playersQuery = usePlayers();
 
   const [step, setStep] = useState<BattleStep>('place');
   const [placeKind, setPlaceKindState] = useState<'field' | 'city'>('field');
@@ -147,6 +151,14 @@ export function useBattleLogic() {
   } | null>(null);
   const [annexationBusy, setAnnexationBusy] = useState(false);
   const [annexationError, setAnnexationError] = useState<string | null>(null);
+  /**
+   * Владелец взятого города: снятие и назначение — отдельные действия, мастер может
+   * сделать и то, и другое (сначала присоединить регион, потом назначить владельца).
+   * Итог хранится снимком, потому что после PATCH поселения перезапрашиваются.
+   */
+  const [cityOwnerBusy, setCityOwnerBusy] = useState(false);
+  const [cityOwnerError, setCityOwnerError] = useState<string | null>(null);
+  const [cityOwnerResult, setCityOwnerResult] = useState<'removed' | 'assigned' | null>(null);
 
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const uidRef = useRef(0);
@@ -377,6 +389,8 @@ export function useBattleLogic() {
             armyId: army.id,
             name: army.name,
             ownerName: army.owner?.name || 'без владельца',
+            ownerPlayerId:
+              army.owner_type === 'Player' && army.owner?.id ? army.owner.id : null,
             countryId: armyCountryId(army, regionCountryId),
             side,
             troops,
@@ -506,6 +520,9 @@ export function useBattleLogic() {
     setAnnexationResult(null);
     setAnnexationBusy(false);
     setAnnexationError(null);
+    setCityOwnerBusy(false);
+    setCityOwnerError(null);
+    setCityOwnerResult(null);
   }, [resetScene]);
 
   /** Пехота от города: по одной в каждую защищающуюся армию (только в городском бою). */
@@ -545,6 +562,7 @@ export function useBattleLogic() {
           isGarrison: true,
           name: `Гарнизон (${selectedSettlement.name})`,
           ownerName: 'город',
+          ownerPlayerId: null,
           countryId: defendingCountryId,
           side: 'defender',
           troops: [
@@ -935,6 +953,34 @@ export function useBattleLogic() {
   }, [armiesToDestroy, busy, outcomeConfirmed]);
 
   /**
+   * Взятый город: что мастер может с ним сделать в конце боя. Появляется всегда,
+   * когда защищающиеся разбиты в городском бою, — владелец города и регион
+   * показываются независимо от того, столица это или нет.
+   */
+  const capturedCity = useMemo(() => {
+    if (outcome !== 'defenders_destroyed' || placeKind !== 'city' || !selectedSettlement) return null;
+
+    // Игроки, чьи армии нападали: их показываем первыми в выборе владельца.
+    const attackerPlayerIds: number[] = [];
+    attackers.forEach(army => {
+      if (army.ownerPlayerId !== null && !attackerPlayerIds.includes(army.ownerPlayerId)) {
+        attackerPlayerIds.push(army.ownerPlayerId);
+      }
+    });
+
+    return {
+      settlementId: selectedSettlement.id,
+      name: selectedSettlement.name,
+      regionId: selectedSettlement.region_id ?? null,
+      isCapital,
+      owner: selectedSettlement.player
+        ? { id: selectedSettlement.player.id, name: selectedSettlement.player.name }
+        : null,
+      attackerPlayerIds,
+    };
+  }, [attackers, isCapital, outcome, placeKind, selectedSettlement]);
+
+  /**
    * Присоединение региона: взята столица государства, значит регион столицы можно
    * передать победителю. Победитель — государство атакующих армий; если союзников
    * было несколько, мастер выбирает страну. Отдельного API захвата города нет,
@@ -945,9 +991,9 @@ export function useBattleLogic() {
    * сам (экран показывает, сколько армий у государства осталось).
    */
   const annexation = useMemo(() => {
-    if (outcome !== 'defenders_destroyed' || placeKind !== 'city' || !isCapital) return null;
+    if (!capturedCity || !capturedCity.isCapital) return null;
     if (defendingCountryId === null) return null;
-    const regionId = selectedSettlement?.region_id ?? null;
+    const regionId = capturedCity.regionId;
     if (regionId === null) return null;
 
     // Страны-победители: государства атакующих армий, кроме самого защищающегося
@@ -977,7 +1023,7 @@ export function useBattleLogic() {
       regionName: region?.name || `регион #${regionId}`,
       defendingCountryId,
       defendingCountryName: countryName(defendingCountryId),
-      capitalName: selectedSettlement?.name || 'столица',
+      capitalName: capturedCity.name,
       attackerCountries: attackerCountryIds.map(id => ({ id, name: countryName(id) })),
       remainingArmyCount,
     };
@@ -985,14 +1031,11 @@ export function useBattleLogic() {
     armiesQuery.data,
     attackers,
     battleArmies,
+    capturedCity,
     countryName,
     defendingCountryId,
-    isCapital,
-    outcome,
-    placeKind,
     regionCountryId,
     regionsQuery.data,
-    selectedSettlement,
   ]);
 
   /** Кому передаём регион: выбор мастера, а если победитель один — сразу он. */
@@ -1040,14 +1083,57 @@ export function useBattleLogic() {
 
   const annexationDone = annexationResult !== null;
 
-  const cityCaptureNote = useMemo(() => {
-    if (outcome !== 'defenders_destroyed' || placeKind !== 'city' || !selectedSettlement) return null;
-    if (annexation || annexationResult) return null;
-    if (isCapital) {
-      return `Столица ${selectedSettlement.name} взята, но государство нападающих не определено — регион передаётся в веб-админке.`;
-    }
-    return `Город ${selectedSettlement.name} взят. Столица государства не взята — регион не переходит; захват города оформляется в веб-админке.`;
-  }, [annexation, annexationResult, isCapital, outcome, placeKind, selectedSettlement]);
+  // ─── Владелец взятого города ─────────────────────────────────────────────
+
+  /** Игроки для выбора владельца: все, но нападавшие — первыми. */
+  const ownerChoices = useMemo(() => {
+    if (!capturedCity) return [];
+    return (playersQuery.data || [])
+      .map(player => ({
+        id: player.id,
+        name: player.name,
+        countryName:
+          player.country?.name || (player.country_id ? countryName(player.country_id) : ''),
+        attacked: capturedCity.attackerPlayerIds.includes(player.id),
+      }))
+      .sort((a, b) => {
+        // Нападавшие первыми: чаще всего владельцем становится тот, кто взял город.
+        if (a.attacked !== b.attacked) return a.attacked ? -1 : 1;
+        return a.name.localeCompare(b.name, 'ru');
+      });
+  }, [capturedCity, countryName, playersQuery.data]);
+
+  /**
+   * Смена владельца города одним вызовом (тот же, что в веб-админке):
+   * `playerId = null` снимает владельца. Поселения инвалидируются, поэтому строка
+   * «Владелец» обновляется из данных, а не из нажатия.
+   */
+  const changeCityOwner = useCallback(
+    async (playerId: number | null): Promise<boolean> => {
+      if (!capturedCity || cityOwnerBusy) return false;
+      setCityOwnerBusy(true);
+      setCityOwnerError(null);
+      try {
+        await ApiService.setSettlementOwner(capturedCity.settlementId, playerId);
+        setCityOwnerResult(playerId === null ? 'removed' : 'assigned');
+        queryClient.invalidate([queryKeys.settlements()]);
+        return true;
+      } catch (error) {
+        setCityOwnerError(getErrorMessage(error, 'Смена владельца города'));
+        return false;
+      } finally {
+        setCityOwnerBusy(false);
+      }
+    },
+    [capturedCity, cityOwnerBusy],
+  );
+
+  const removeCityOwner = useCallback(() => changeCityOwner(null), [changeCityOwner]);
+
+  const assignCityOwner = useCallback(
+    (playerId: number) => changeCityOwner(playerId),
+    [changeCityOwner],
+  );
 
   // ─── Значения для карточек ───────────────────────────────────────────────
 
@@ -1145,7 +1231,14 @@ export function useBattleLogic() {
     annexationBusy,
     annexationError,
     confirmAnnexation,
-    cityCaptureNote,
+    /** Взятый город и действия с его владельцем. */
+    capturedCity,
+    ownerChoices,
+    cityOwnerBusy,
+    cityOwnerError,
+    cityOwnerResult,
+    removeCityOwner,
+    assignCityOwner,
     armiesToDestroy,
     rollTroop,
     rollArmy,

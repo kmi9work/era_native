@@ -32,6 +32,7 @@ const BattlesScreen = () => {
     queryKeys.allCountries(),
     queryKeys.settlements(),
     queryKeys.regions(),
+    queryKeys.players(),
   ]);
 
   const nextLabel =
@@ -70,6 +71,7 @@ const BattlesScreen = () => {
               queryKeys.allCountries(),
               queryKeys.settlements(),
               queryKeys.regions(),
+              queryKeys.players(),
             ]}
             style={styles.badge}
           />

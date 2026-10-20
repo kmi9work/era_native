@@ -5,6 +5,9 @@ export interface Player {
   player_type?: string;
   family?: string;
   jobs: string[];
+  /** Государство игрока: GET /players.json отдаёт и id, и объект страны. */
+  country_id?: number | null;
+  country?: { id: number; name: string; short_name?: string } | null;
 }
 
 export interface Guild {
@@ -127,6 +130,8 @@ export interface Settlement {
   region_id?: number | null;
   buildings?: Building[];
   income?: number;
+  /** Владелец города (игрок). Отдельного player_id партиал не отдаёт — только объект. */
+  player?: Player | null;
 }
 
 export interface Region {

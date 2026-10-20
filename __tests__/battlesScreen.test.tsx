@@ -60,6 +60,12 @@ const regions = [
   { id: 20, name: 'Тверская земля', country_id: 2, country: { id: 2, name: 'Тверь' } },
 ];
 
+// Игроки игры: нужны панели итога для назначения владельца города.
+const players = [
+  { id: 6, name: 'Волоцкий', country_id: 1, country: { id: 1, name: 'Русь' } },
+  { id: 7, name: 'Твердислав', country_id: 2, country: { id: 2, name: 'Тверь' } },
+];
+
 // Все страны игры: Руси в регионах нет, но в выборе места она быть обязана.
 const countries = [
   { id: 1, name: 'Русь' },
@@ -76,6 +82,8 @@ jest.mock('../src/services/api', () => ({
     getCountries: jest.fn(async () => countries),
     deleteArmy: jest.fn(async () => undefined),
     captureRegion: jest.fn(async () => undefined),
+    setSettlementOwner: jest.fn(async () => undefined),
+    getPlayers: jest.fn(async () => players),
   },
 }));
 
