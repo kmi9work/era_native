@@ -2,15 +2,15 @@ import ApiService from '../../../../services/api';
 
 /**
  * Данные цеха гильдии для плагина many_teams:
- * `GET /many_teams/guilds/:guild_id/workshop` — где добыча разрешена, где
- * запрещена, какие эмбарго наложены на гильдию, текст надписи для мастеров.
+ * `GET /many_teams/guilds/:guild_id/workshop` — где гильдии разрешены
+ * строительство и работа предприятий, где запрещены, какие эмбарго наложены,
+ * текст надписи для мастеров.
  */
 export interface WorkshopCountry {
   country_id: number;
   country_name: string;
   short_name?: string;
-  player_country: boolean;
-  extraction_allowed: boolean;
+  allowed: boolean;
   overridden: boolean;
   own: boolean;
 }
@@ -22,7 +22,7 @@ export interface WorkshopPlant {
   region_name?: string;
   country_id?: number;
   country_name?: string;
-  extraction_forbidden: boolean;
+  work_forbidden: boolean;
 }
 
 export interface GuildWorkshopInfo {

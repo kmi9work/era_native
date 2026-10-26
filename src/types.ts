@@ -21,7 +21,10 @@ export interface PlantPlace {
   region_id: number;
   region_name: string;
   region_country_id?: number | null;
+  /** Можно ли этой гильдии строить и работать в государстве места (many_teams). */
   allowed?: boolean;
+  /** Название государства места — приходит из движка many_teams. */
+  country_name?: string;
 }
 
 export interface TechnologyRequirement {

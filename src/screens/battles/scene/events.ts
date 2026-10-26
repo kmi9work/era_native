@@ -173,7 +173,3 @@ export const buildRoundScene = (snapshot: RoundSnapshot): RoundScene => {
 
   return { steps, totalDuration: at };
 };
-
-/** Длительность сцены с учётом скорости (та же формула, что у проигрывателя). */
-export const sceneDuration = (scene: RoundScene, speed: number): number =>
-  Math.round(scene.totalDuration / Math.max(1, speed));

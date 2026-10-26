@@ -3,22 +3,38 @@
  *
  * Всё это — чистые функции и один таймер, поэтому проверяется без устройства:
  * порядок «удар → смерть», длительности, раскладка на узком и широком экране,
- * переполнение, скорость показа и «Пропустить».
+ * блоки армий, переполнение и «Пропустить».
  */
 import React from 'react';
+import { StyleSheet, Text } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import {
   buildRoundScene,
   SCENE_DURATION,
-  sceneDuration,
   type RoundSnapshot,
   type SceneStep,
 } from '../src/screens/battles/scene/events';
 import { computeBoardLayout } from '../src/screens/battles/board/layout';
+import HitCounter from '../src/screens/battles/board/HitCounter';
 import {
   useScenePlayer,
   type ScenePlayer,
 } from '../src/screens/battles/scene/useScenePlayer';
+
+/** Тексты из поддерева: у Text бывает несколько детей-строк. */
+const collectText = (node: any, acc: string[] = []): string[] => {
+  if (node == null) return acc;
+  if (typeof node === 'string' || typeof node === 'number') {
+    acc.push(String(node));
+    return acc;
+  }
+  if (Array.isArray(node)) {
+    node.forEach(child => collectText(child, acc));
+    return acc;
+  }
+  if (node.children) collectText(node.children, acc);
+  return acc;
+};
 
 const troop = (
   uid: string,
@@ -105,11 +121,6 @@ describe('сцена раунда', () => {
     expect(scene.steps[0].text).toContain('попаданий нет');
   });
 
-  it('скорость сокращает длительность сцены', () => {
-    const scene = buildRoundScene(snapshot());
-    expect(sceneDuration(scene, 1)).toBe(scene.totalDuration);
-    expect(sceneDuration(scene, 2)).toBe(Math.round(scene.totalDuration / 2));
-  });
 });
 
 describe('раскладка сцены', () => {
@@ -176,6 +187,132 @@ describe('раскладка сцены', () => {
     expect(layout.boxes.length).toBeLessThan(60);
   });
 
+  it('каждая армия получает свою рамку с подписью', () => {
+    const layout = computeBoardLayout({
+      width: 1024,
+      height: 768,
+      attackers: [],
+      defenders: [],
+      attackerGroups: [
+        { uid: 'a-1', label: 'Вологские', uids: ['a1', 'a2'] },
+        { uid: 'a-2', label: 'Казанцы', uids: ['a3'] },
+      ],
+      defenderGroups: [{ uid: 'd-1', label: 'Гарнизон (Тверь)', uids: ['d1', 'd2'] }],
+    });
+
+    // По рамке на армию: две у нападающих, одна у защищающихся.
+    expect(layout.groups).toHaveLength(3);
+    const attackerFrames = layout.groups.filter(frame => frame.side === 'attacker');
+    expect(attackerFrames.map(frame => frame.label)).toEqual(['Вологские', 'Казанцы']);
+
+    // Отряд знает свою армию, и его фишка стоит внутри рамки этой армии.
+    const frames = new Map(layout.groups.map(frame => [frame.uid, frame]));
+    layout.boxes.forEach(box => {
+      const frame = frames.get(box.armyUid)!;
+      expect(frame).toBeDefined();
+      expect(box.side).toBe(frame.side);
+      expect(box.x).toBeGreaterThanOrEqual(frame.x);
+      expect(box.x + box.size).toBeLessThanOrEqual(frame.x + frame.width);
+      expect(box.y).toBeGreaterThanOrEqual(frame.y);
+      // Название отряда живёт под фишкой — внутри той же рамки.
+      expect(box.y + box.size).toBeLessThanOrEqual(frame.y + frame.height);
+    });
+
+    // Рамки не налезают друг на друга — ни в строке, ни между строками.
+    layout.groups.forEach((frame, index) => {
+      layout.groups.slice(index + 1).forEach(other => {
+        const apart =
+          frame.x + frame.width <= other.x ||
+          other.x + other.width <= frame.x ||
+          frame.y + frame.height <= other.y ||
+          other.y + other.height <= frame.y;
+        expect(apart).toBe(true);
+      });
+    });
+  });
+
+  it('армии идут в строку друг за другом и переносятся, когда не влезают', () => {
+    // Три армии по одному отряду на широком экране — все в одной строке.
+    const wide = computeBoardLayout({
+      width: 1024,
+      height: 768,
+      attackers: [],
+      defenders: [],
+      attackerGroups: [
+        { uid: 'a-1', label: 'Первая', uids: ['a1'] },
+        { uid: 'a-2', label: 'Вторая', uids: ['a2'] },
+        { uid: 'a-3', label: 'Третья', uids: ['a3'] },
+      ],
+      defenderGroups: [{ uid: 'd-1', label: 'Защитники', uids: ['d1'] }],
+    });
+    const wideFrames = wide.groups.filter(frame => frame.side === 'attacker');
+    expect(new Set(wideFrames.map(frame => frame.y)).size).toBe(1);
+    // Блоки стоят слева направо в порядке армий.
+    expect(wideFrames[0].x).toBeLessThan(wideFrames[1].x);
+    expect(wideFrames[1].x).toBeLessThan(wideFrames[2].x);
+
+    // Узкий экран: те же армии переносятся на следующую строку.
+    const narrow = computeBoardLayout({
+      width: 300,
+      height: 760,
+      attackers: [],
+      defenders: [],
+      attackerGroups: [
+        { uid: 'a-1', label: 'Первая', uids: ['a1', 'a2', 'a3', 'a4'] },
+        { uid: 'a-2', label: 'Вторая', uids: ['a5', 'a6', 'a7', 'a8'] },
+      ],
+      defenderGroups: [{ uid: 'd-1', label: 'Защитники', uids: ['d1'] }],
+      minToken: 34,
+    });
+    const narrowFrames = narrow.groups.filter(frame => frame.side === 'attacker');
+    expect(narrowFrames).toHaveLength(2);
+    // Вторая армия ушла ниже первой.
+    expect(narrowFrames[1].y).toBeGreaterThan(narrowFrames[0].y);
+    expect(narrowFrames[1].x).toBeLessThanOrEqual(narrowFrames[0].x);
+  });
+
+  it('колонка счётчиков не отбирается фишками', () => {
+    const layout = computeBoardLayout({
+      width: 390,
+      height: 780,
+      attackers,
+      defenders,
+      gutter: 60,
+    });
+
+    expect(layout.gutter).toBe(60);
+    layout.boxes.forEach(box => {
+      expect(box.x).toBeGreaterThanOrEqual(72);
+      expect(box.x + box.size).toBeLessThanOrEqual(390);
+    });
+    // Фишки те же, а места под них меньше — переполнения по-прежнему нет.
+    expect(layout.boxes).toHaveLength(6);
+    expect(layout.overflow).toEqual({ attacker: 0, defender: 0 });
+  });
+
+  it('армия, которая не влезла в полосу, показывает «+N» в своей рамке', () => {
+    const many = (prefix: string) => Array.from({ length: 12 }, (_, index) => `${prefix}${index}`);
+    const layout = computeBoardLayout({
+      width: 390,
+      height: 320,
+      attackers: [],
+      defenders: [],
+      attackerGroups: [
+        { uid: 'a-1', label: 'Вологские', uids: many('a') },
+        { uid: 'a-2', label: 'Казанцы', uids: many('b') },
+      ],
+      defenderGroups: [{ uid: 'd-1', label: 'Гарнизон', uids: ['d1'] }],
+      minToken: 34,
+    });
+
+    const attackerFrames = layout.groups.filter(frame => frame.side === 'attacker');
+    expect(attackerFrames.length).toBeGreaterThan(0);
+    expect(layout.overflow.attacker).toBeGreaterThan(0);
+    attackerFrames.forEach(frame => {
+      expect(frame.visible).toBeLessThanOrEqual(frame.total);
+    });
+  });
+
   it('крепость добавляет стену и сдвигает защищающихся вниз', () => {
     const withWall = computeBoardLayout({
       width: 390,
@@ -191,6 +328,43 @@ describe('раскладка сцены', () => {
     const defenderTop = (layout: typeof withWall) =>
       Math.min(...layout.boxes.filter(box => box.side === 'defender').map(box => box.y));
     expect(defenderTop(withWall)).toBeGreaterThan(defenderTop(withoutWall));
+  });
+});
+
+describe('счётчик попаданий', () => {
+  const renderCounter = (count: number, band = { top: 0, height: 300 }) => {
+    let tree: ReactTestRenderer;
+    act(() => {
+      tree = create(
+        <HitCounter count={count} side="attacker" band={band} gutter={64} />,
+      );
+    });
+    return tree!;
+  };
+
+  it('показывает крупное число и подпись', () => {
+    const tree = renderCounter(3);
+    const texts = tree.root
+      .findAllByType(Text)
+      .map(node => collectText(node.props.children).join(''));
+    expect(texts).toContain('3');
+    expect(texts).toContain('попаданий');
+    // Цифра читается с другого конца стола: не мельче 26 dp при колонке 64.
+    const number = tree.root.findAllByType(Text).find(node =>
+      collectText(node.props.children).join('') === '3',
+    );
+    const size = StyleSheet.flatten(number!.props.style).fontSize as number;
+    expect(size).toBeGreaterThanOrEqual(26);
+    act(() => tree.unmount());
+  });
+
+  it('ноль попаданий показан приглушённо, но на месте', () => {
+    const tree = renderCounter(0);
+    const texts = tree.root
+      .findAllByType(Text)
+      .map(node => collectText(node.props.children).join(''));
+    expect(texts).toContain('0');
+    act(() => tree.unmount());
   });
 });
 
@@ -264,12 +438,16 @@ describe('проигрыватель сцены', () => {
     player.unmount();
   });
 
-  it('скорость x2 сокращает шаг вдвое', () => {
+  it('шаги идут ровно своей длительностью — ускорения показа нет', () => {
     const player = renderPlayer();
-    act(() => player.current.setSpeed(2));
     act(() => player.current.start(steps()));
+    // Половины шага недостаточно: шаг длится столько, сколько заявлено.
     act(() => {
       jest.advanceTimersByTime(Math.round(SCENE_DURATION.impact / 2));
+    });
+    expect(player.current.index).toBe(0);
+    act(() => {
+      jest.advanceTimersByTime(SCENE_DURATION.impact);
     });
     expect(player.current.index).toBe(1);
     player.unmount();

@@ -98,7 +98,8 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
   const upgradeMutation = useMutation<[number], any>(
     (id: number) => ApiService.upgradePlant(id),
     {
-      invalidate: (_result, id) => [queryKeys.plant(id), queryKeys.plantLevels(), queryKeys.availablePlaces()],
+      invalidate: (_result, id) => [queryKeys.plant(id), queryKeys.plantLevels()],
+      invalidatePrefix: [['availablePlaces']],
       onError: (error) => Alert.alert('Ошибка', getErrorMessage(error)),
     },
   );
@@ -106,7 +107,8 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
   const downgradeMutation = useMutation<[number], any>(
     (id: number) => ApiService.downgradePlant(id),
     {
-      invalidate: (_result, id) => [queryKeys.plant(id), queryKeys.plantLevels(), queryKeys.availablePlaces()],
+      invalidate: (_result, id) => [queryKeys.plant(id), queryKeys.plantLevels()],
+      invalidatePrefix: [['availablePlaces']],
       onError: (error) => Alert.alert('Ошибка', getErrorMessage(error)),
     },
   );

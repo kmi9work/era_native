@@ -176,8 +176,10 @@ const Token: React.FC<TokenProps> = ({
         />
       </View>
 
+      {/* Ширина подписи — ровно колонка фишки: иначе названия соседних
+          отрядов наезжают друг на друга и читаются как одно слово. */}
       <Text
-        style={[styles.name, { width: box.size + 34, marginLeft: -17 }]}
+        style={[styles.name, { width: box.size + 8, marginLeft: -4 }]}
         numberOfLines={2}
       >
         {troop.name}

@@ -19,7 +19,6 @@ export interface TroopViewState {
   isHit: boolean;
   spinning: boolean;
   participates: boolean;
-  power: number;
   modifier: number;
   bonus: number;
   debuff: number;

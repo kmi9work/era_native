@@ -1,12 +1,15 @@
 /**
- * Сцена боя: фон, город/крепость, фишки отрядов и эффекты удара.
+ * Сцена боя: фон, город/крепость, армии, фишки отрядов и эффекты удара.
  *
  * Размеры приходят из `onLayout` и уходят в чистую `computeBoardLayout` — на
  * телефоне, планшете и в ландшафте раскладка разная, координат в коде нет.
  *
  * Что читается из логики:
- *  - отряды и их кубики (`troopView`);
+ *  - армии и их отряды (`battleArmies`, `troopView`): каждая армия — отдельная
+ *    рамка с подписью, чтобы принадлежность отряда армии была видна сразу;
  *  - выбранные мастером потери (`victims`) — для подсветки;
+ *  - попадания раунда (`hits`) — крупными цифрами у полос той стороны,
+ *    в которую попали;
  *  - проигранные шаги сцены (`scene.applied`) — кто уже погиб;
  *  - активный шаг (`scene.active`) — кто бьёт и кого бьют прямо сейчас.
  */
@@ -17,12 +20,16 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import type { BattleLogic, BattleSide } from '../../hooks/useBattleLogic';
+import type { BattleArmy, BattleLogic, BattleSide } from '../../hooks/useBattleLogic';
 import ImpactEffects from './Effects';
+import HitCounter from './HitCounter';
 import Token, { type StageTroop } from './Token';
-import { computeBoardLayout } from './layout';
+import { computeBoardLayout, type BoardGroup } from './layout';
 
 const CITY_BLOCKS = [0.16, 0.22, 0.14, 0.26, 0.18];
+/** Левая колонка под крупные счётчики попаданий: не уже 56 и не шире 96 dp. */
+const GUTTER_MIN = 56;
+const GUTTER_MAX = 96;
 
 /** Плашка «Раунд N» в конце сцены: пауза между раундами, видимая игрокам. */
 const RoundBanner: React.FC<{ round: number; duration: number }> = ({ round, duration }) => {
@@ -50,6 +57,16 @@ const initialSize = () => {
   const window = Dimensions.get('window');
   return { width: window.width, height: Math.round(window.height * 0.5) };
 };
+
+/** Армия на сцене → блок с подписью: по ней видно, чьи это отряды. */
+const groupsFor = (armies: BattleArmy[]): BoardGroup[] =>
+  armies
+    .filter(army => !army.retreated && army.troops.length > 0)
+    .map(army => ({
+      uid: army.uid,
+      label: army.name,
+      uids: army.troops.map(troop => troop.uid),
+    }));
 
 const BattleStage: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
   const [size, setSize] = useState(initialSize);
@@ -89,6 +106,17 @@ const BattleStage: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
     return list;
   }, [battleArmies, troopView]);
 
+  const attackerGroups = useMemo(
+    () => groupsFor(battleArmies.filter(army => army.side === 'attacker')),
+    [battleArmies],
+  );
+  const defenderGroups = useMemo(
+    () => groupsFor(battleArmies.filter(army => army.side === 'defender')),
+    [battleArmies],
+  );
+
+  const gutter = Math.min(GUTTER_MAX, Math.max(GUTTER_MIN, Math.round(size.width * 0.09)));
+
   const layout = useMemo(
     () =>
       computeBoardLayout({
@@ -96,9 +124,12 @@ const BattleStage: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
         height: size.height,
         attackers: troops.filter(troop => troop.side === 'attacker').map(troop => troop.uid),
         defenders: troops.filter(troop => troop.side === 'defender').map(troop => troop.uid),
+        attackerGroups,
+        defenderGroups,
         fortressLevel: placeKind === 'city' ? fortressLevel : 0,
+        gutter,
       }),
-    [fortressLevel, placeKind, size.height, size.width, troops],
+    [attackerGroups, defenderGroups, fortressLevel, gutter, placeKind, size.height, size.width, troops],
   );
 
   const boxesByUid = useMemo(
@@ -118,10 +149,16 @@ const BattleStage: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
   const impact = active && active.kind === 'impact' ? active : null;
   const victimBox = impact ? boxesByUid.get(impact.victimUid) : undefined;
 
+  /** Попадания, полученные стороной: их нанесли отряды противоположной. */
   const incomingHits = (side: BattleSide): number =>
     side === 'attacker' ? logic.hits.defender : logic.hits.attacker;
 
   const retreated = logic.battleArmies.filter(army => army.retreated);
+  /**
+   * Счётчики нужны там, где попадания этого раунда ещё «в силе»: выбор потерь и
+   * проигрывание сцены. В отступлении попадания уже применены и обнулены.
+   */
+  const showCounters = logic.phase === 'casualties' || logic.phase === 'playing';
 
   return (
     <View style={styles.stage} onLayout={onLayout}>
@@ -180,6 +217,61 @@ const BattleStage: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
         <Text style={styles.empty}>На сцене нет отрядов</Text>
       ) : null}
 
+      {/* Рамки армий: под фишками, чтобы мастер видел, чьи это отряды. */}
+      {layout.groups.map(group => (
+        <View
+          key={`${group.side}-${group.uid}`}
+          pointerEvents="none"
+          style={[
+            styles.group,
+            group.side === 'attacker' ? styles.groupAttacker : styles.groupDefender,
+            {
+              left: group.x,
+              top: group.y,
+              width: group.width,
+              height: group.height,
+            },
+          ]}
+        >
+          {group.label ? (
+            <View
+              style={[
+                styles.groupLabelBox,
+                group.side === 'attacker' ? styles.groupLabelAttacker : styles.groupLabelDefender,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.groupLabel,
+                  group.side === 'attacker' ? styles.groupLabelTextAttacker : styles.groupLabelTextDefender,
+                ]}
+                numberOfLines={1}
+              >
+                {group.label}
+                {group.visible < group.total ? ` +${group.total - group.visible}` : ''}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ))}
+
+      {showCounters ? (
+        <>
+          <HitCounter
+            count={incomingHits('attacker')}
+            side="attacker"
+            band={layout.bands.attacker}
+            gutter={layout.gutter}
+          />
+          <HitCounter
+            count={incomingHits('defender')}
+            side="defender"
+            band={layout.bands.defender}
+            gutter={layout.gutter}
+          />
+        </>
+      ) : null}
+
       {troops.map(troop => {
         const box = boxesByUid.get(troop.uid);
         if (!box) return null;
@@ -217,7 +309,12 @@ const BattleStage: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
       ) : null}
 
       {layout.overflow.attacker > 0 ? (
-        <Text style={[styles.overflow, { top: layout.bands.attacker.top + 2, left: 8 }]}>
+        <Text
+          style={[
+            styles.overflow,
+            { top: layout.bands.attacker.top + 2, left: layout.gutter + 16 },
+          ]}
+        >
           +{layout.overflow.attacker} вне сцены
         </Text>
       ) : null}
@@ -225,7 +322,10 @@ const BattleStage: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
         <Text
           style={[
             styles.overflow,
-            { top: layout.bands.defender.top + layout.bands.defender.height - 18, left: 8 },
+            {
+              top: layout.bands.defender.top + layout.bands.defender.height - 18,
+              left: layout.gutter + 16,
+            },
           ]}
         >
           +{layout.overflow.defender} вне сцены
@@ -288,6 +388,47 @@ const styles = StyleSheet.create({
     width: 8,
     height: 6,
     backgroundColor: '#a99e88',
+  },
+  group: {
+    position: 'absolute',
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  groupAttacker: {
+    borderColor: 'rgba(198, 40, 40, 0.35)',
+    backgroundColor: 'rgba(198, 40, 40, 0.05)',
+  },
+  groupDefender: {
+    borderColor: 'rgba(21, 101, 192, 0.35)',
+    backgroundColor: 'rgba(21, 101, 192, 0.05)',
+  },
+  groupLabelBox: {
+    position: 'absolute',
+    top: -1,
+    left: 4,
+    maxWidth: '96%',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  groupLabelAttacker: {
+    backgroundColor: '#fff5f5',
+    borderColor: 'rgba(198, 40, 40, 0.35)',
+  },
+  groupLabelDefender: {
+    backgroundColor: '#f3f8fe',
+    borderColor: 'rgba(21, 101, 192, 0.35)',
+  },
+  groupLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  groupLabelTextAttacker: {
+    color: '#b71c1c',
+  },
+  groupLabelTextDefender: {
+    color: '#0d47a1',
   },
   empty: {
     position: 'absolute',

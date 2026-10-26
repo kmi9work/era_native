@@ -9,6 +9,8 @@ import { queryClient } from './queryClient';
 
 export interface MutationOptions<TArgs extends unknown[], TResult> {
   invalidate?: (result: TResult, ...args: TArgs) => QueryKey[];
+  /** Инвалидация по префиксу: для ключей с параметром (['availablePlaces', guildId]). */
+  invalidatePrefix?: QueryKey[];
   setData?: (result: TResult, ...args: TArgs) => Array<{ key: QueryKey; data: unknown }>;
   onSuccess?: (result: TResult, ...args: TArgs) => void;
   onError?: (error: ApiError, ...args: TArgs) => void;
@@ -33,7 +35,7 @@ export function useMutation<TArgs extends unknown[], TResult>(
     setState({ isLoading: true, error: undefined });
     try {
       const result = await fnRef.current(...args);
-      const { invalidate, setData, onSuccess } = optionsRef.current;
+      const { invalidate, invalidatePrefix, setData, onSuccess } = optionsRef.current;
       if (setData) {
         for (const item of setData(result, ...args)) {
           queryClient.setQueryData(item.key, item.data);
@@ -41,6 +43,11 @@ export function useMutation<TArgs extends unknown[], TResult>(
       }
       if (invalidate) {
         queryClient.invalidate(invalidate(result, ...args));
+      }
+      if (invalidatePrefix) {
+        for (const prefix of invalidatePrefix) {
+          queryClient.invalidatePrefix(prefix);
+        }
       }
       setState({ isLoading: false, error: undefined });
       if (onSuccess) onSuccess(result, ...args);

@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { armyModifier, TROOP_KINDS, TROOP_LABEL, troopPower } from '../../../services/battleRules';
+import { armyModifier, TROOP_KINDS, TROOP_LABEL } from '../../../services/battleRules';
 import type { BattleArmy, BattleLogic } from '../../hooks/useBattleLogic';
 import { TROOP_IMAGE } from '../troopImages';
 import TroopCard from './TroopCard';
@@ -78,7 +78,6 @@ const ArmyGroup: React.FC<ArmyGroupProps> = ({ army, logic, mode, animations, hi
       {mode === 'battle' ? (
         <View style={styles.statsRow}>
           <Text style={styles.stat}>отрядов: {army.troops.length}</Text>
-          <Text style={styles.stat}>сила: {army.troops.reduce((sum, t) => sum + troopPower(t.kind), 0)}</Text>
           {modifier !== 0 ? (
             <Text style={[styles.stat, modifier > 0 ? styles.statGood : styles.statBad]}>
               к кубикам: {modifier > 0 ? `+${modifier}` : modifier}

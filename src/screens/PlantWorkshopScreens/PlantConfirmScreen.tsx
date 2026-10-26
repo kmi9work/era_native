@@ -10,7 +10,7 @@ import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navig
 import { BrotherPrinterService } from '../../services/BrotherPrinterService';
 import ApiService from '../../services/api';
 import PlantCostBlock from '../../screens/components/PlantCostBlock';
-import { queryKeys } from '../../data/keys';
+import PlaceBuildNotice from '../components/PlaceBuildNotice';
 import { queryClient } from '../../data/queryClient';
 
 type PlantWorkshopStackParamList = {
@@ -78,7 +78,7 @@ export default function PlantConfirmScreen() {
       // Точечная инвалидация: новое предприятие меняет список предприятий гильдии
       // и свободные места; остальные данные (цены, страны) не трогаем.
       queryClient.invalidatePrefix(['guild']);
-      queryClient.invalidate([queryKeys.availablePlaces()]);
+      queryClient.invalidatePrefix(['availablePlaces']);
 
       const regionName = place.name || 'Неизвестный регион';
 
@@ -123,7 +123,7 @@ export default function PlantConfirmScreen() {
                   await ApiService.deletePlant(plantData.id);
                   // Предприятие откатили — список гильдии и места снова устарели.
                   queryClient.invalidatePrefix(['guild']);
-                  queryClient.invalidate([queryKeys.availablePlaces()]);
+                  queryClient.invalidatePrefix(['availablePlaces']);
                 } catch (deleteError: any) {
                   // ignore
                 }
@@ -169,11 +169,7 @@ export default function PlantConfirmScreen() {
         </Text>
       )}
 
-      {place && place.allowed === false && (
-        <Text style={styles.forbiddenNotice}>
-          Регион не принадлежит Руси — строительство запрещено правилами.
-        </Text>
-      )}
+      <PlaceBuildNotice place={place} guildName={guildName} style={styles.forbiddenNotice} />
 
       <PlantCostBlock
         cost={firstLevel?.price || {}}

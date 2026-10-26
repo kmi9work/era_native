@@ -44,11 +44,11 @@ export default function NewPlantTypeScreen() {
     plantCategories,
     getFilteredPlantTypes,
     selectPlantType,
-  } = usePlantBuilding();
+  } = usePlantBuilding(guildId);
 
   // Доступные места и справочник уровней обновляются при возврате на экран;
   // пока экран в фокусе, справочник уровней опрашивается раз в 60 с (ключи из слоя).
-  useRefetchOnFocus([queryKeys.availablePlaces(), queryKeys.plantLevels()]);
+  useRefetchOnFocus([queryKeys.availablePlaces(guildId), queryKeys.plantLevels()]);
 
   const filteredPlants = getFilteredPlantTypes();
 
@@ -75,7 +75,7 @@ export default function NewPlantTypeScreen() {
       <Text style={styles.stepTitle}>Выберите тип предприятия</Text>
 
       <View style={styles.statusRow}>
-        <DataFreshnessBadge keys={[queryKeys.availablePlaces(), queryKeys.plantLevels()]} />
+        <DataFreshnessBadge keys={[queryKeys.availablePlaces(guildId), queryKeys.plantLevels()]} />
       </View>
 
       {/* Фильтры по категориям */}
@@ -141,7 +141,8 @@ export default function NewPlantTypeScreen() {
                   )}
                   {hasAnyPlaces && !hasAllowedPlaces && (
                     <Text style={styles.forbiddenNotice}>
-                      Нет площадок в землях Руси — строительство запрещено правилами
+                      Нет земель, где строительство разрешено — построить можно только по
+                      решению ведущего
                     </Text>
                   )}
                   {closedTechnologyNames.length > 0 && (

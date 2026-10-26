@@ -9,7 +9,7 @@
  * Ручной выбор потерь сохранён: в фазе `casualties` мастер касается фишки и
  * меняет авто-выбор (это правило игры, а не оформление).
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   BackHandler,
   Platform,
@@ -20,7 +20,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { canRetreat, troopPower } from '../../../services/battleRules';
+import { canRetreat } from '../../../services/battleRules';
 import DataFreshnessBadge from '../../../components/DataFreshnessBadge';
 import { queryKeys } from '../../../data/keys';
 import type { BattleLogic } from '../../hooks/useBattleLogic';
@@ -35,7 +35,7 @@ const PHASE_HINTS: Record<string, string> = {
   rolling:
     'Нажмите «Ход» — кубики бросит вся армия сразу. Можно бросать по одному, касаясь кубика у отряда.',
   casualties:
-    'Система выбрала самые слабые отряды. Можно поменять выбор — коснитесь фишки. Затем подтвердите потери.',
+    'Крупная цифра у строя — сколько отрядов этой стороны обязано погибнуть. Касание фишки снимает или ставит метку потери; затем подтвердите потери.',
   playing: 'Идёт бой: удары, потери, лента событий.',
   retreat: 'Обе стороны сохранились. Любая армия может отступить: нужен бросок 4–6.',
   finished: 'Сражение завершено.',
@@ -69,20 +69,6 @@ const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
     defender: logic.troopsBySide.defender,
   });
 
-  const power = useMemo(
-    () => ({
-      attacker: logic.attackers.reduce(
-        (sum, army) => sum + army.troops.reduce((acc, troop) => acc + troopPower(troop.kind), 0),
-        0,
-      ),
-      defender: logic.defenders.reduce(
-        (sum, army) => sum + army.troops.reduce((acc, troop) => acc + troopPower(troop.kind), 0),
-        0,
-      ),
-    }),
-    [logic.attackers, logic.defenders],
-  );
-
   const retreatArmies = logic.battleArmies.filter(army => !army.retreated && army.troops.length > 0);
 
   return (
@@ -90,14 +76,9 @@ const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
       <Hud
         round={logic.round}
         placeTitle={logic.placeTitle}
-        phase={logic.phase}
         hint={PHASE_HINTS[logic.phase] || ''}
         troops={logic.troopsBySide}
         initial={initialTroops.current}
-        power={power}
-        hits={logic.hits}
-        speed={logic.scene.speed}
-        onSpeed={logic.scene.setSpeed}
         topInset={STATUS_TOP}
         onBack={logic.goBack}
       />
@@ -153,10 +134,9 @@ const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
       <View style={styles.controls}>
         {logic.phase === 'casualties' ? (
           <Text style={styles.casualtiesText} numberOfLines={2}>
-            Попадания: атакующие {logic.hits.attacker} → отметьте{' '}
-            {Math.min(logic.hits.attacker, logic.troopsBySide.defender)} у защищающихся;
-            защищающиеся {logic.hits.defender} → отметьте{' '}
-            {Math.min(logic.hits.defender, logic.troopsBySide.attacker)} у атакующих.
+            Атакующие получили {logic.incomingHits.attacker} — отметьте{' '}
+            {logic.lossLimit('attacker')}; защищающиеся получили{' '}
+            {logic.incomingHits.defender} — отметьте {logic.lossLimit('defender')}.
           </Text>
         ) : null}
 

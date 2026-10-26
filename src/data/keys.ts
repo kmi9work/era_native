@@ -24,8 +24,11 @@ export const queryKeys = {
   plantLevels: (): QueryKey => ['plantLevels'],
   /** Ресурсы (номенклатура): GET /resources/show_all_resources */
   resources: (): QueryKey => ['resources'],
-  /** Доступные места: GET /plant_places/available_places */
-  availablePlaces: (): QueryKey => ['availablePlaces'],
+  /** Доступные места: GET /plant_places/available_places?guild_id=
+   *  Гильдия в ключе обязательна: от неё зависит признак `allowed` (разрешение
+   *  гильдии строить и работать в государстве места), а место без гильдии
+   *  показывало бы чужой ответ из кэша. */
+  availablePlaces: (guildId?: number | null): QueryKey => ['availablePlaces', guildId ?? 'none'],
   /** Технологии государства (название, эффект, факт открытия): GET /technologies.json */
   technologies: (): QueryKey => ['technologies'],
   /** Страны (отношения, эмбарго): GET /countries/foreign_countries.json */

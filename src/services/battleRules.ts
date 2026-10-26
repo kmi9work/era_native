@@ -37,7 +37,7 @@ export const HIT_THRESHOLD: Record<TroopKind, number | null> = {
   cannon: null,
 };
 
-/** Сила отряда — по ней система выбирает «самые слабые» потери. */
+/** Вес типа отряда: только для выбора «самых слабых» потерь, на экран не выводится. */
 export const TROOP_POWER: Record<TroopKind, number> = {
   infantry: 1,
   heavy_infantry: 3,
@@ -167,9 +167,6 @@ export const autoCasualties = <T extends { kind: TroopKind; order: number }>(
 /** Сколько попаданий нанесли броски стороны. */
 export const countHits = (rolls: Array<{ kind: TroopKind; value: number }>): number =>
   rolls.reduce((sum, item) => (isHit(item.kind, item.value) ? sum + 1 : sum), 0);
-
-/** Сила отряда для подписи карточки. */
-export const troopPower = (kind: TroopKind): number => TROOP_POWER[kind];
 
 /** Отряды армии с бэкенда → карточки боя (по одному на каждый отряд). */
 export const battleTroopsFromArmy = (

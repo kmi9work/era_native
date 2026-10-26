@@ -118,8 +118,16 @@ class ApiService {
   }
 
   // Получить доступные места для строительства
-  async getAvailablePlaces(signal?: AbortSignal): Promise<any[]> {
-    const response = await this.api.get('/plant_places/available_places', { signal });
+  /**
+   * Доступные места строительства. `guildId` уходит на бэкенд параметром: в
+   * режиме many_teams по нему считается признак `allowed` — разрешение этой
+   * гильдии строить и работать в государстве места.
+   */
+  async getAvailablePlaces(guildId?: number | null, signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/plant_places/available_places', {
+      signal,
+      params: guildId != null ? { guild_id: guildId } : undefined,
+    });
     return response.data;
   }
 

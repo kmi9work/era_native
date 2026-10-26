@@ -43,7 +43,6 @@ import {
   rollDie,
   TROOP_KINDS,
   TROOP_LABEL,
-  troopPower,
   type TroopKind,
 } from '../../services/battleRules';
 import type { Army, Settlement } from '../../types';
@@ -668,6 +667,29 @@ export function useBattleLogic() {
     [fortressBonusFor, modifierFor],
   );
 
+  /**
+   * Сколько отрядов стороны обязано погибнуть в этом раунде: попадания
+   * ПРОТИВНИКА, но не больше, чем у стороны живых отрядов.
+   *
+   * Раньше выбор потерь ограничивался `hits[side]` — попаданиями самой стороны,
+   * и при `hits.attacker < hits.defender` мастер не мог проставить нужное число
+   * меток (снять метку получалось, вернуть — нет).
+   */
+  const lossLimit = useCallback(
+    (side: BattleSide): number => {
+      const incoming = side === 'attacker' ? hits.defender : hits.attacker;
+      const alive = side === 'attacker' ? troopsBySide.attacker : troopsBySide.defender;
+      return Math.max(0, Math.min(incoming, alive));
+    },
+    [hits, troopsBySide],
+  );
+
+  /** Попадания, полученные стороной (их нанесли отряды противоположной). */
+  const incomingHits = useMemo(
+    () => ({ attacker: hits.defender, defender: hits.attacker }),
+    [hits],
+  );
+
   const participants = useMemo(() => {
     const list: Array<{ armyUid: string; side: BattleSide; troop: BattleTroop }> = [];
     battleArmies.forEach(army => {
@@ -786,27 +808,31 @@ export function useBattleLogic() {
     setPhase('casualties');
   }, [battleArmies, effectiveFor, participants, phase, rolls, step]);
 
-  /** Ручная правка авто-выбора: клик по карточке заменяет последнюю выбранную. */
+  /**
+   * Ручная правка авто-выбора: касание фишки снимает или ставит метку потери.
+   * Предел — `lossLimit(side)`: пока меток меньше, новая добавляется, а когда
+   * предел достигнут, новая метка заменяет самую старую.
+   */
   const toggleVictim = useCallback(
     (side: BattleSide, uid: string) => {
       if (phase !== 'casualties') return;
+      const limit = lossLimit(side);
+      if (limit <= 0) return;
       setVictims(prev => {
         const current = prev[side];
         if (current.includes(uid)) {
           return { ...prev, [side]: current.filter(item => item !== uid) };
         }
-        const limit = hits[side];
-        if (limit <= 0) return prev;
         const next = current.length >= limit ? [...current.slice(1), uid] : [...current, uid];
         return { ...prev, [side]: next };
       });
     },
-    [hits, phase],
+    [lossLimit, phase],
   );
 
   const victimsReady =
-    victims.attacker.length === Math.min(hits.defender, troopsBySide.attacker) &&
-    victims.defender.length === Math.min(hits.attacker, troopsBySide.defender);
+    victims.attacker.length === lossLimit('attacker') &&
+    victims.defender.length === lossLimit('defender');
 
   /**
    * Подтверждение потерь: отряды НЕ удаляются сразу — сначала сцена проигрывает
@@ -1148,7 +1174,6 @@ export function useBattleLogic() {
         isHit: value === null ? false : isHit(troop.kind, value),
         spinning: spinningNow,
         participates: participates(troop.kind),
-        power: troopPower(troop.kind),
         modifier: modifierFor(army),
         bonus: army.bonus,
         debuff: army.debuff,
@@ -1214,6 +1239,10 @@ export function useBattleLogic() {
     spinning,
     retreatSpinning,
     hits,
+    /** Сколько попаданий получила каждая сторона: крупные цифры на сцене. */
+    incomingHits,
+    /** Сколько отрядов сторона обязана потерять в раунде (предел меток). */
+    lossLimit,
     victims,
     victimsReady,
     outcome,

@@ -12,6 +12,7 @@ import ProcessingBlock from '../../screens/components/ProcessingBlock';
 import { useUpgradeConfirmation } from '../hooks/useUpgradeConfirmation';
 import DataFreshnessBadge from '../../components/DataFreshnessBadge';
 import { queryKeys } from '../../data/keys';
+import { componentRegistry } from '../../registry';
 import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
 
 type PlantWorkshopStackParamList = {
@@ -85,6 +86,12 @@ export default function UpgradeConfirmScreen() {
   const canDowngrade = typeof plantLevelNum === 'number' && plantLevelNum > 1;
   const guildName = selectedPlant?.economic_subject?.name || selectedPlant?.economic_subject || 'Гильдия';
 
+  // Запрет строительства и работы предприятий (п. 0-5) — точка расширения
+  // игрового плагина: в many_teams компонент знает разрешение гильдии в
+  // государстве, где стоит предприятие, и рисует плашку. В базовой игре
+  // компонент не зарегистрирован — экран не меняется.
+  const PlantWorkNotice = componentRegistry.get<{ plant: any }>('many_teams.PlantWorkNotice');
+
   return (
     <View style={styles.content}>
       <ScrollView
@@ -106,6 +113,8 @@ export default function UpgradeConfirmScreen() {
             {plantType} • Ур. {plantLevel} • {guildName} • ID: {selectedPlant?.id}
           </Text>
         </View>
+
+        {PlantWorkNotice && selectedPlant ? <PlantWorkNotice plant={selectedPlant} /> : null}
 
         {/* Блок переработки/добычи */}
         <ProcessingBlock processing={processing} loading={false} />

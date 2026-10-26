@@ -9,8 +9,10 @@ import { AvailablePlaceInfo, PlantLevel, PlantPlace } from '../../types';
 
 /**
  * Хук для строительства новых предприятий.
- * Доступные места — ключ ['availablePlaces'] (TTL 60 с, refetch-on-focus),
- * уровни по типу — выборка из кэша ключа ['plantLevels'] без повторного запроса.
+ * Доступные места — ключ ['availablePlaces', guildId] (TTL 60 с, refetch-on-focus):
+ * гильдия уходит параметром запроса, потому что признак `allowed` (разрешение
+ * гильдии строить и работать в государстве места) считается по ней.
+ * Уровни по типу — выборка из кэша ключа ['plantLevels'] без повторного запроса.
  */
 export interface PlantBuildingState {
   availablePlaces: AvailablePlaceInfo[];
@@ -20,8 +22,8 @@ export interface PlantBuildingState {
   loading: boolean;
 }
 
-export function usePlantBuilding() {
-  const placesQuery = useAvailablePlaces();
+export function usePlantBuilding(guildId?: number | null) {
+  const placesQuery = useAvailablePlaces(guildId);
   const levelsQuery = usePlantLevels();
 
   const [selection, setSelection] = useState<{
@@ -55,8 +57,8 @@ export function usePlantBuilding() {
 
   /** Ручное обновление списка мест (pull-to-refresh). */
   const loadAvailablePlaces = useCallback(
-    () => queryClient.refetch([queryKeys.availablePlaces()], { force: true }),
-    [],
+    () => queryClient.refetch([queryKeys.availablePlaces(guildId)], { force: true }),
+    [guildId],
   );
 
   const getFilteredPlantTypes = useCallback(() => {

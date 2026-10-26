@@ -631,6 +631,110 @@ describe('useBattleLogic', () => {
     hook.unmount();
   });
 
+  it('метку потери можно снять и поставить обратно, даже когда попаданий у сторон разное число', () => {
+    // Защитники попали трижды, нападающие — один раз: у атакующих обязаны
+    // погибнуть 3 отряда, у защищающихся 1. Раньше предел меток брался по
+    // «своим» попаданиям (hits.attacker = 1), поэтому после снятия метки
+    // нужное число было уже не набрать.
+    mockData.armies = [
+      army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота', 'Пехота']),
+      army(2, 'Защитники', 2, 'Тверь', ['Пехота', 'Пехота', 'Пехота']),
+    ];
+    const hook = renderHook(() => useBattleLogic());
+    setupFieldBattle(hook);
+
+    // Броски: у нападающих 6,1,1 (одно попадание), у защитников 6,6,6 (три).
+    // Армии бросают по очереди: кубики обеих сторон идут вперемешку по времени.
+    const attackerDice = [0.99, 0, 0];
+    act(() => hook.current.setRng(() => attackerDice.shift() ?? 0.99));
+    act(() => hook.current.rollArmy(hook.current.attackers[0].uid));
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    act(() => hook.current.setRng(() => 0.99));
+    act(() => hook.current.rollArmy(hook.current.defenders[0].uid));
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+
+    expect(hook.current.phase).toBe('casualties');
+    expect(hook.current.hits).toEqual({ attacker: 1, defender: 3 });
+    expect(hook.current.incomingHits).toEqual({ attacker: 3, defender: 1 });
+    expect(hook.current.lossLimit('attacker')).toBe(3);
+    expect(hook.current.lossLimit('defender')).toBe(1);
+    expect(hook.current.victims.attacker).toHaveLength(3);
+    expect(hook.current.victimsReady).toBe(true);
+
+    const target = hook.current.victims.attacker[0];
+
+    // Сняли метку — подтверждение потерь недоступно.
+    act(() => hook.current.toggleVictim('attacker', target));
+    expect(hook.current.victims.attacker).toHaveLength(2);
+    expect(hook.current.victims.attacker).not.toContain(target);
+    expect(hook.current.victimsReady).toBe(false);
+
+    // Поставили обратно — выбор снова полный.
+    act(() => hook.current.toggleVictim('attacker', target));
+    expect(hook.current.victims.attacker).toHaveLength(3);
+    expect(hook.current.victims.attacker).toContain(target);
+    expect(hook.current.victimsReady).toBe(true);
+
+    // Четвёртой метки быть не может: предел — три погибших отряда.
+    const extra = hook.current.victims.attacker[0];
+    act(() => hook.current.toggleVictim('attacker', extra));
+    act(() => hook.current.toggleVictim('attacker', extra));
+    expect(hook.current.victims.attacker).toHaveLength(3);
+    expect(hook.current.victimsReady).toBe(true);
+
+    hook.unmount();
+  });
+
+  it('предел меток — попадания противника, но не больше живых отрядов стороны', () => {
+    // У защитников один отряд, а нападающие попали трижды: отметить можно один,
+    // и снятую метку разрешено вернуть (по «своим» попаданиям защитников 0).
+    mockData.armies = [
+      army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота', 'Пехота']),
+      army(2, 'Защитники', 2, 'Тверь', ['Пехота']),
+    ];
+    const hook = renderHook(() => useBattleLogic());
+    setupFieldBattle(hook);
+
+    // Нападающие бросают 6,6,6 (три попадания), защитник — 4 (промах).
+    act(() => hook.current.setRng(() => 0.99));
+    act(() => hook.current.rollArmy(hook.current.attackers[0].uid));
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    act(() => hook.current.setRng(() => 0.5));
+    act(() => hook.current.rollArmy(hook.current.defenders[0].uid));
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+
+    expect(hook.current.hits).toEqual({ attacker: 3, defender: 0 });
+    expect(hook.current.incomingHits.defender).toBe(3);
+    expect(hook.current.lossLimit('defender')).toBe(1);
+    expect(hook.current.lossLimit('attacker')).toBe(0);
+    expect(hook.current.victims.defender).toHaveLength(1);
+
+    const victim = hook.current.victims.defender[0];
+    act(() => hook.current.toggleVictim('defender', victim));
+    expect(hook.current.victims.defender).toHaveLength(0);
+    expect(hook.current.victimsReady).toBe(false);
+
+    act(() => hook.current.toggleVictim('defender', victim));
+    expect(hook.current.victims.defender).toEqual([victim]);
+    expect(hook.current.victimsReady).toBe(true);
+
+    // У атакующих попаданий не было — метка не ставится вовсе.
+    const attackerTroop = hook.current.attackers[0].troops[0].uid;
+    act(() => hook.current.toggleVictim('attacker', attackerTroop));
+    expect(hook.current.victims.attacker).toHaveLength(0);
+    expect(hook.current.victimsReady).toBe(true);
+
+    hook.unmount();
+  });
+
   it('при промахах обеих сторон начинается отступление, бросок 4–6 уводит армию', () => {
     const hook = renderHook(() => useBattleLogic());
     setupFieldBattle(hook);

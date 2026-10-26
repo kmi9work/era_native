@@ -1,10 +1,11 @@
 /**
  * Проигрыватель сцены боя — единственный владелец времени на шаге «Бой».
  *
- * Работает по шагам из `scene/events.ts`: показывает шаг, ждёт его длительность
- * (делённую на скорость), переходит к следующему, в конце вызывает `onComplete`
- * ровно один раз. Ни `requestAnimationFrame`, ни `setInterval`: шаги на
- * `setTimeout`, поэтому сцена проверяется тестами через `advanceTimersByTime`.
+ * Работает по шагам из `scene/events.ts`: показывает шаг, ждёт его длительность,
+ * переходит к следующему, в конце вызывает `onComplete` ровно один раз.
+ * Ускорения показа нет: единственное управление временем — «Пропустить».
+ * Ни `requestAnimationFrame`, ни `setInterval`: шаги на `setTimeout`, поэтому
+ * сцена проверяется тестами через `advanceTimersByTime`.
  *
  * Почему один владелец: раньше потери применялись отдельным таймером в
  * `useBattleLogic`, а карточки анимировались своими — два источника времени
@@ -27,8 +28,6 @@ export interface ScenePlayer {
   applied: SceneStep[];
   isPlaying: boolean;
   finished: boolean;
-  speed: number;
-  setSpeed: (speed: number) => void;
   start: (steps: SceneStep[]) => void;
   skip: () => void;
   reset: () => void;
@@ -37,12 +36,10 @@ export interface ScenePlayer {
 export function useScenePlayer(options: ScenePlayerOptions = {}): ScenePlayer {
   const [steps, setSteps] = useState<SceneStep[]>([]);
   const [index, setIndex] = useState(-1);
-  const [speed, setSpeedState] = useState(1);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runRef = useRef(0);
   const doneRef = useRef(false);
-  const speedRef = useRef(1);
   const stepsRef = useRef<SceneStep[]>([]);
   const completeRef = useRef<ScenePlayerOptions['onComplete']>(options.onComplete);
   completeRef.current = options.onComplete;
@@ -67,7 +64,7 @@ export function useScenePlayer(options: ScenePlayerOptions = {}): ScenePlayer {
     (list: SceneStep[], from: number, run: number) => {
       const step = list[from];
       if (!step) return;
-      const duration = Math.max(40, Math.round(step.duration / Math.max(1, speedRef.current)));
+      const duration = Math.max(40, Math.round(step.duration));
       timerRef.current = setTimeout(() => {
         if (runRef.current !== run) return;
         const next = from + 1;
@@ -117,12 +114,6 @@ export function useScenePlayer(options: ScenePlayerOptions = {}): ScenePlayer {
     setIndex(-1);
   }, [clearTimer]);
 
-  const setSpeed = useCallback((value: number) => {
-    const next = value > 0 ? value : 1;
-    speedRef.current = next;
-    setSpeedState(next);
-  }, []);
-
   const applied = useMemo(
     () => (index < 0 ? [] : steps.slice(0, Math.min(index + 1, steps.length))),
     [index, steps],
@@ -135,8 +126,6 @@ export function useScenePlayer(options: ScenePlayerOptions = {}): ScenePlayer {
     applied,
     isPlaying: index >= 0 && index < steps.length,
     finished: steps.length > 0 && index >= steps.length,
-    speed,
-    setSpeed,
     start,
     skip,
     reset,

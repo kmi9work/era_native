@@ -219,10 +219,13 @@ describe('экран «Сражения»', () => {
     expect(
       tokenLabels.some(label => label.includes('Пушка') && label.includes('не участвует в бою')),
     ).toBe(true);
-    // Управление боем: один жест на раунд, состав и скорость показа.
-    expect(screenTexts(tree)).toEqual(
-      expect.arrayContaining(['Ход', 'Состав', 'x1', 'x2']),
-    );
+    // Управление боем: один жест на раунд и «Состав». Ускорения показа нет.
+    expect(screenTexts(tree)).toEqual(expect.arrayContaining(['Ход', 'Состав']));
+    expect(screenTexts(tree).some(text => /^x\d$/.test(text))).toBe(false);
+    // Каждая армия подписана на сцене — видно, чьи это отряды.
+    expect(screenTexts(tree)).toEqual(expect.arrayContaining(['Вологские', 'Тверь']));
+    // Силы отрядов на сцене не показываются: старый функционал убран.
+    expect(screenTexts(tree).some(text => text.includes('сила'))).toBe(false);
 
     // Бой идёт на весь экран: шапка экрана «Сражения» на этом шаге скрыта,
     // иначе сцена висела бы под синей полосой вместо всего экрана.

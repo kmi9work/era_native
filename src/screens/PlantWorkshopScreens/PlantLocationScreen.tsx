@@ -10,6 +10,7 @@ import {
 import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navigation/native';
 import PlantCostBlock from '../../screens/components/PlantCostBlock';
 import { usePlantBuilding } from '../hooks/usePlantBuilding';
+import PlaceBuildNotice from '../components/PlaceBuildNotice';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -40,7 +41,7 @@ export default function PlantLocationScreen() {
     firstLevel: any;
   };
 
-  const { state, selectPlace } = usePlantBuilding();
+  const { state, selectPlace } = usePlantBuilding(guildId);
 
   useEffect(() => {
     // Устанавливаем выбранный тип предприятия
@@ -97,11 +98,7 @@ export default function PlantLocationScreen() {
             >
               <View style={styles.itemButtonContent}>
                 <Text style={styles.itemButtonText}>{place.region_name}</Text>
-                {place.allowed === false && (
-                  <Text style={styles.forbiddenNotice}>
-                    Регион не принадлежит Руси — строительство запрещено правилами
-                  </Text>
-                )}
+                <PlaceBuildNotice place={place} guildName={guildName} />
               </View>
               <Text style={styles.itemButtonArrow}>›</Text>
             </TouchableOpacity>

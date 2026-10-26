@@ -4,16 +4,18 @@ import { useRefetchOnFocus } from '../../../../data/useRefetchOnFocus';
 import { manyTeamsKeys, useGuildWorkshop } from '../hooks/useGuildWorkshop';
 
 /**
- * Яркая отметка «добыча запрещена» по одной гильдии (п. 6).
+ * Яркая отметка «строительство и работа запрещены» по одной гильдии (п. 0-6).
  *
- * Данные — с бэкенда (`forbidden_plant_ids`), клиент ничего не вычисляет сам:
- * разрешение меняет Казначей, и программа показывает то, что лежит в базе.
+ * Запрет один: он закрывает и строительство, и работу уже построенных
+ * предприятий. Данные — с бэкенда (`forbidden_plant_ids`), клиент ничего не
+ * вычисляет сам: разрешение меняют Казначей и мастера, программа показывает то,
+ * что лежит в базе.
  */
-export default function ExtractionForbiddenBanner({ guildId }: { guildId: number }) {
+export default function WorkForbiddenBanner({ guildId }: { guildId: number }) {
   const { data } = useGuildWorkshop(guildId);
   useRefetchOnFocus([manyTeamsKeys.workshop(guildId)]);
 
-  const forbidden = (data?.plants || []).filter((plant) => plant.extraction_forbidden);
+  const forbidden = (data?.plants || []).filter((plant) => plant.work_forbidden);
 
   if (!forbidden.length) {
     return null;
@@ -28,14 +30,14 @@ export default function ExtractionForbiddenBanner({ guildId }: { guildId: number
   return (
     <View style={styles.banner}>
       <Text style={styles.title}>
-        ДОБЫЧА ЗАПРЕЩЕНА{data?.guild?.name ? ` — ${data.guild.name}` : ''}
+        СТРОИТЕЛЬСТВО И РАБОТА ЗАПРЕЩЕНЫ{data?.guild?.name ? ` — ${data.guild.name}` : ''}
       </Text>
       <Text style={styles.text}>
         {preview}
         {rest > 0 ? ` и ещё ${rest}` : ''}
       </Text>
       <Text style={styles.hint}>
-        Добыча на этих предприятиях запрещена в государстве их расположения.
+        В государстве расположения гильдии запрещено строить предприятия и работать на них.
       </Text>
     </View>
   );

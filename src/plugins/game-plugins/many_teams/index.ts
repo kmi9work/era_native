@@ -1,6 +1,7 @@
 import { gameConfig } from '../../../config/game';
 import { componentRegistry } from '../../../registry';
 import EnterpriseListScreenWithManyTeams from './screens/EnterpriseListScreenWithManyTeams';
+import PlantWorkNotice from './components/PlantWorkNotice';
 import MultiEnterprisesScreenWithManyTeams from './screens/MultiEnterprisesScreenWithManyTeams';
 
 /**
@@ -12,8 +13,10 @@ import MultiEnterprisesScreenWithManyTeams from './screens/MultiEnterprisesScree
  * модуля. Плагин подменяет два экрана цеха предприятий:
  *  - обычный режим — список предприятий гильдии;
  *  - пакетный режим — список предприятий нескольких гильдий.
- * Оба показывают надпись для мастеров (п. 8) и яркую отметку «добыча запрещена»
- * по данным бэкенда (п. 6): `/many_teams/guilds/:id/workshop`.
+ * Оба показывают надпись для мастеров (п. 8) и яркую отметку «строительство и
+ * работа запрещены» по данным бэкенда (п. 6): `/many_teams/guilds/:id/workshop`.
+ * На экран «Улучшение предприятия» плагин отдаёт плашку `PlantWorkNotice`
+ * (п. 5 правил) — ядро рисует её из componentRegistry.
  */
 
 /** Ключ игры = ACTIVE_GAME движка; справочник игр ядра пополняется ниже. */
@@ -35,6 +38,7 @@ export const initManyTeamsPlugin = () => {
 
   componentRegistry.register('many_teams.EnterpriseListScreen', EnterpriseListScreenWithManyTeams);
   componentRegistry.register('many_teams.MultiEnterprisesScreen', MultiEnterprisesScreenWithManyTeams);
+  componentRegistry.register('many_teams.PlantWorkNotice', PlantWorkNotice);
 
   console.log('[many_teams] Plugin initialized');
 };

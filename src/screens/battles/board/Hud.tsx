@@ -1,24 +1,19 @@
 /**
- * HUD сцены: раунд, силы сторон, попадания за раунд, скорость показа.
- * Это «табло» боя — то, что игрок читает, не отвлекаясь от фишек.
+ * HUD сцены: раунд, силы сторон в отрядах и подсказка по фазе.
+ * Это «табло» боя — то, что мастер читает, не отвлекаясь от фишек.
+ *
+ * Попаданий здесь нет: они показываются крупными цифрами прямо у полос той
+ * стороны, в которую попали (см. `board/HitCounter`). Ускорения показа тоже
+ * нет — сцену можно только пропустить.
  */
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import type { BattlePhase } from '../../hooks/useBattleLogic';
-
-export const SPEEDS: readonly number[] = [1, 2, 3];
-
 interface HudProps {
   round: number;
   placeTitle: string;
-  phase: BattlePhase;
   hint: string;
   troops: { attacker: number; defender: number };
   initial: { attacker: number; defender: number };
-  power: { attacker: number; defender: number };
-  hits: { attacker: number; defender: number };
-  speed: number;
-  onSpeed: (speed: number) => void;
   /** Бой идёт на весь экран: табло само отступает под строку статуса. */
   topInset?: number;
   onBack?: () => void;
@@ -32,14 +27,9 @@ const barWidth = (left: number, total: number): `${number}%` => {
 const Hud: React.FC<HudProps> = ({
   round,
   placeTitle,
-  phase,
   hint,
   troops,
   initial,
-  power,
-  hits,
-  speed,
-  onSpeed,
   topInset = 0,
   onBack,
 }) => (
@@ -60,20 +50,6 @@ const Hud: React.FC<HudProps> = ({
           {placeTitle}
         </Text>
       </View>
-      <View style={styles.speedBlock}>
-        {SPEEDS.map(value => (
-          <TouchableOpacity
-            key={value}
-            style={[styles.speedChip, speed === value ? styles.speedChipActive : null]}
-            onPress={() => onSpeed(value)}
-            accessibilityLabel={`Скорость показа x${value}`}
-          >
-            <Text style={[styles.speedText, speed === value ? styles.speedTextActive : null]}>
-              x{value}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
     </View>
 
     <View style={styles.forces}>
@@ -89,7 +65,7 @@ const Hud: React.FC<HudProps> = ({
           />
         </View>
         <Text style={styles.forceValue}>
-          {troops.attacker} / {initial.attacker} · сила {power.attacker}
+          {troops.attacker} / {initial.attacker}
         </Text>
       </View>
 
@@ -105,7 +81,7 @@ const Hud: React.FC<HudProps> = ({
           />
         </View>
         <Text style={styles.forceValue}>
-          {troops.defender} / {initial.defender} · сила {power.defender}
+          {troops.defender} / {initial.defender}
         </Text>
       </View>
     </View>
@@ -114,11 +90,6 @@ const Hud: React.FC<HudProps> = ({
       <Text style={styles.hint} numberOfLines={2}>
         {hint}
       </Text>
-      {phase === 'casualties' || phase === 'playing' || phase === 'retreat' ? (
-        <Text style={styles.hits}>
-          попадания: {hits.attacker} — {hits.defender}
-        </Text>
-      ) : null}
     </View>
   </View>
 );
@@ -163,29 +134,6 @@ const styles = StyleSheet.create({
     color: '#78909c',
     marginTop: 1,
   },
-  speedBlock: {
-    flexDirection: 'row',
-  },
-  speedChip: {
-    borderWidth: 1,
-    borderColor: '#cfd8dc',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginLeft: 6,
-  },
-  speedChipActive: {
-    backgroundColor: '#1976d2',
-    borderColor: '#1976d2',
-  },
-  speedText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#546e7a',
-  },
-  speedTextActive: {
-    color: '#ffffff',
-  },
   forces: {
     marginTop: 6,
   },
@@ -223,9 +171,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#64b5f6',
   },
   forceValue: {
-    width: 108,
+    width: 62,
     textAlign: 'right',
-    fontSize: 10,
+    fontSize: 11,
+    fontWeight: '600',
     color: '#607d8b',
   },
   bottomRow: {
@@ -238,12 +187,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#78909c',
     lineHeight: 13,
-  },
-  hits: {
-    marginLeft: 8,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#455a64',
   },
 });
 

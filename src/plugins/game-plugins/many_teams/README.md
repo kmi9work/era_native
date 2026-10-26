@@ -10,11 +10,15 @@ era_scripts либо значение приходит из нативного �
 
 - **Надпись для мастеров** (п. 8): «Обработка добычи и переработки предприятий
   ТОЛЬКО в программе» — оранжевая плашка над экранами цеха.
-- **Отметка «добыча запрещена»** (п. 6): красная плашка со списком предприятий,
-  добыча на которых запрещена в государстве их расположения. Работает в обычном
-  режиме (`EnterpriseListScreen`) и в пакетном (`MultiEnterprisesScreen`).
-  Данные — только с бэкенда: `GET /many_teams/guilds/:id/workshop`
-  (`forbidden_plant_ids`), клиент ничего не вычисляет.
+- **Отметка «строительство и работа запрещены»** (п. 0-6): красная плашка со
+  списком предприятий, для которых в государстве расположения запрещены
+  строительство и работа (это один запрет). Работает в обычном режиме
+  (`EnterpriseListScreen`) и в пакетном (`MultiEnterprisesScreen`). Данные —
+  только с бэкенда: `GET /many_teams/guilds/:id/workshop`
+  (`forbidden_plant_ids`, `plants[].work_forbidden`), клиент ничего не вычисляет.
+- **Плашка на «Улучшении предприятия»** (п. 5): компонент `PlantWorkNotice`
+  регистрируется как `many_teams.PlantWorkNotice`; ядро рисует его на экране
+  улучшения, если он зарегистрирован (в базовой игре — не рисует).
 
 ## Устройство
 
@@ -25,8 +29,9 @@ many_teams/
 ├── hooks/useGuildWorkshop.ts      # ключ слоя данных + TTL/опрос
 ├── components/
 │   ├── MastersNotice.tsx          # надпись для мастеров
-│   ├── ExtractionForbiddenBanner.tsx
-│   └── ManyTeamsOverlay.tsx        # накладка над экраном
+│   ├── WorkForbiddenBanner.tsx    # отметка на списках предприятий
+│   ├── PlantWorkNotice.tsx        # плашка на «Улучшении предприятия»
+│   └── ManyTeamsOverlay.tsx       # накладка над экраном
 └── screens/
     ├── EnterpriseListScreenWithManyTeams.tsx
     └── MultiEnterprisesScreenWithManyTeams.tsx
@@ -35,4 +40,6 @@ many_teams/
 Плагин ничего не меняет внутри экранов ядра: он их оборачивает и регистрирует
 обёртки в `componentRegistry` под именами `many_teams.EnterpriseListScreen` и
 `many_teams.MultiEnterprisesScreen`. Ядро берёт экран из registry, если плагин
-активен, иначе использует свой (`PlantWorkshopScreen.tsx`).
+активен, иначе использует свой (`PlantWorkshopScreen.tsx`). Плашка запрета на
+экране улучшения — тоже точка расширения: ядро (`UpgradeConfirmScreen.tsx`)
+рисует `many_teams.PlantWorkNotice`, если плагин его зарегистрировал.

@@ -73,7 +73,7 @@ export function useEnterpriseManagement(guildId: number | null | undefined) {
     },
     {
       // Мутация не перезагружает всё: освободившееся место в списке доступных.
-      invalidate: () => [queryKeys.availablePlaces()],
+      invalidatePrefix: [['availablePlaces']],
       onError: (error) => Alert.alert('Ошибка', getErrorMessage(error, 'Не удалось удалить предприятие')),
     },
   );
