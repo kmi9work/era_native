@@ -16,6 +16,10 @@ era_scripts либо значение приходит из нативного �
   (`EnterpriseListScreen`) и в пакетном (`MultiEnterprisesScreen`). Данные —
   только с бэкенда: `GET /many_teams/guilds/:id/workshop`
   (`forbidden_plant_ids`, `plants[].work_forbidden`), клиент ничего не вычисляет.
+- **Где гильдии разрешено строить** (п. 0-4): строка под надписью для мастеров
+  на экране «Предприятия гильдии» — «Строительство и работа разрешены в землях:
+  …» по полю `countries[].allowed` того же цеха. В пакетном режиме её нет: там
+  гильдий несколько.
 - **Плашка на «Улучшении предприятия»** (п. 5): компонент `PlantWorkNotice`
   регистрируется как `many_teams.PlantWorkNotice`; ядро рисует его на экране
   улучшения, если он зарегистрирован (в базовой игре — не рисует).
@@ -29,6 +33,7 @@ many_teams/
 ├── hooks/useGuildWorkshop.ts      # ключ слоя данных + TTL/опрос
 ├── components/
 │   ├── MastersNotice.tsx          # надпись для мастеров
+│   ├── BuildCountriesNotice.tsx   # где гильдии разрешено строить и работать
 │   ├── WorkForbiddenBanner.tsx    # отметка на списках предприятий
 │   ├── PlantWorkNotice.tsx        # плашка на «Улучшении предприятия»
 │   └── ManyTeamsOverlay.tsx       # накладка над экраном

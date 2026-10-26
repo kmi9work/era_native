@@ -2,22 +2,37 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import MastersNotice from './MastersNotice';
 import WorkForbiddenBanner from './WorkForbiddenBanner';
+import BuildCountriesNotice from './BuildCountriesNotice';
 import { useGuildWorkshop } from '../hooks/useGuildWorkshop';
 
 /**
  * Накладка плагина many_teams над экранами цеха предприятий.
  *
- * Показывает надпись для мастеров (п. 8) и яркие отметки «строительство и работа
- * запрещены» (п. 0-6) в обычном и пакетном режиме. Накладка прозрачна для нажатий
- * (`box-none`), поэтому кнопки экрана остаются доступны.
+ * Показывает надпись для мастеров (п. 8), список государств, где гильдии
+ * разрешено строить и работать (обычный режим, п. 0-4), и яркие отметки
+ * «строительство и работа запрещены» (п. 0-6) в обычном и пакетном режиме.
+ * Накладка прозрачна для нажатий (`box-none`), поэтому кнопки экрана остаются
+ * доступны.
  */
-export default function ManyTeamsOverlay({ guildIds }: { guildIds: number[] }) {
+export default function ManyTeamsOverlay({
+  guildIds,
+  inline = false,
+}: {
+  guildIds: number[];
+  /** true — плашки встают в поток над экраном (не перекрывают заголовок). */
+  inline?: boolean;
+}) {
   const firstGuildId = guildIds.length ? guildIds[0] : undefined;
-  const { data } = useGuildWorkshop(firstGuildId);
+  const { data, isLoading } = useGuildWorkshop(firstGuildId);
+
+  // Список разрешённых государств — только для одной гильдии (экран «Предприятия
+  // гильдии»): в пакетном режиме гильдий несколько, и общий список путал бы.
+  const singleGuild = guildIds.length === 1;
 
   return (
-    <View style={styles.wrapper} pointerEvents="box-none">
+    <View style={inline ? styles.inlineWrapper : styles.wrapper} pointerEvents="box-none">
       <MastersNotice text={data?.notice} />
+      {singleGuild ? <BuildCountriesNotice countries={data?.countries} loading={isLoading} /> : null}
       {guildIds.map((guildId) => (
         <WorkForbiddenBanner key={guildId} guildId={guildId} />
       ))}
@@ -31,5 +46,8 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
+  },
+  inlineWrapper: {
+    paddingBottom: 4,
   },
 });

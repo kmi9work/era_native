@@ -5,8 +5,12 @@ import EnterpriseListScreen from '../../../../screens/PlantWorkshopScreens/Enter
 import ManyTeamsOverlay from '../components/ManyTeamsOverlay';
 
 /**
- * Обычный режим цеха: экран ядра + накладка плагина (надпись для мастеров и
- * яркая отметка «добыча запрещена», п. 6 и п. 8).
+ * Обычный режим цеха: экран ядра + плашки плагина (надпись для мастеров,
+ * государства, где гильдии разрешено строить и работать, яркая отметка
+ * «строительство и работа запрещены»; п. 0-8).
+ *
+ * Плашки стоят в потоке над экраном, а не накладкой поверх: на этом экране они
+ * иначе закрывали бы заголовок и шильдик свежести.
  */
 export default function EnterpriseListScreenWithManyTeams() {
   const route = useRoute<RouteProp<Record<string, { guildId?: number }>, string>>();
@@ -14,12 +18,15 @@ export default function EnterpriseListScreenWithManyTeams() {
 
   return (
     <View style={styles.container}>
-      <EnterpriseListScreen />
-      <ManyTeamsOverlay guildIds={guildId ? [guildId] : []} />
+      <ManyTeamsOverlay guildIds={guildId ? [guildId] : []} inline />
+      <View style={styles.screen}>
+        <EnterpriseListScreen />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  screen: { flex: 1 },
 });

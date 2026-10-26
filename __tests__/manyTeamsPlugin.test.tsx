@@ -20,7 +20,22 @@ jest.mock('@react-navigation/native', () => ({
 const workshop = {
   notice: 'Обработка добычи и переработки предприятий ТОЛЬКО в программе',
   guild: { id: 1, name: 'Забавники' },
-  countries: [],
+  countries: [
+    {
+      country_id: 1,
+      country_name: 'Москва',
+      allowed: false,
+      overridden: false,
+      own: false,
+    },
+    {
+      country_id: 12,
+      country_name: 'Великий Новгород',
+      allowed: true,
+      overridden: false,
+      own: true,
+    },
+  ],
   plants: [
     {
       plant_id: 10,
@@ -151,6 +166,48 @@ describe('плагин many_teams', () => {
     );
 
     expect(collectText(tree.toJSON()).join(' | ')).not.toContain('ЗАПРЕЩЕНЫ');
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+});
+
+describe('страны, где гильдии разрешено строить', () => {
+  it('на экране «Предприятия гильдии» перечисляет только разрешённые государства', async () => {
+    const tree = await renderOverlay();
+    const text = collectText(tree.toJSON()).join(' | ');
+
+    expect(text).toContain('Строительство и работа разрешены в землях');
+    expect(text).toContain('«Великий Новгород»');
+    expect(text).not.toContain('«Москва»');
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('в пакетном режиме (несколько гильдий) списка государств нет', async () => {
+    const tree = await renderWithData(<ManyTeamsOverlay guildIds={[1, 2]} />);
+    const text = collectText(tree.toJSON()).join(' | ');
+
+    expect(text).not.toContain('разрешены в землях');
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('когда не разрешено нигде — прямо об этом сообщает', async () => {
+    (ApiService.get as jest.Mock).mockResolvedValueOnce({
+      ...workshop,
+      countries: workshop.countries.map((country) => ({ ...country, allowed: false })),
+    });
+
+    const tree = await renderOverlay();
+    const text = collectText(tree.toJSON()).join(' | ');
+
+    expect(text).toContain('запрещены во всех государствах');
 
     await act(async () => {
       tree.unmount();
