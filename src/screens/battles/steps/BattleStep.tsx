@@ -11,6 +11,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   BackHandler,
   Platform,
   ScrollView,
@@ -71,6 +72,26 @@ const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
 
   const retreatArmies = logic.battleArmies.filter(army => !army.retreated && army.troops.length > 0);
 
+  /**
+   * «Закончить сражение» в перерыве между раундами: уход стороны — решение
+   * мастера, а не бросок 4–6. Сценарии различаются итогом, а не кнопкой:
+   * в поле и при уходе атакующих из-под осады — финальный экран сражения, а
+   * если защищающиеся оставляют город, к нему добавляется передача владельца.
+   */
+  const askFinishBattle = () => {
+    Alert.alert(
+      'Закончить сражение',
+      logic.placeKind === 'city'
+        ? 'Кто уходит из боя? Если город оставляют защищающиеся — в итоге появится передача владельца города.'
+        : 'Кто уходит из боя?',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        { text: 'Атакующие уходят', onPress: () => logic.finishBattle('attacker') },
+        { text: 'Защищающиеся уходят', onPress: () => logic.finishBattle('defender') },
+      ],
+    );
+  };
+
   return (
     <View style={styles.container}>
       <Hud
@@ -128,6 +149,14 @@ const BattleStep: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
               </View>
             ))}
           </ScrollView>
+
+          <TouchableOpacity
+            style={styles.finishButton}
+            onPress={askFinishBattle}
+            accessibilityLabel="Закончить сражение"
+          >
+            <Text style={styles.finishButtonText}>Закончить сражение</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
 
@@ -258,6 +287,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#90a4ae',
     marginTop: 3,
+  },
+  finishButton: {
+    borderWidth: 1,
+    borderColor: '#c62828',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  finishButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#c62828',
   },
   controls: {
     flexDirection: 'row',

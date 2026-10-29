@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useMemo } from 'react
 import { useResources } from '../../data/hooks/useResources';
 import ApiService from '../../services/api';
 import { CONFIG } from '../../config';
-import { feedToPlant, isTechSchoolsOpen } from '../../services/plantProduction';
+import { feedToPlant, techSchoolsOpenForPlant } from '../../services/plantProduction';
 
 const getBaseUrl = () => {
   const configuredBase = (CONFIG.BACKEND_URL || '').replace(/\/+$/, '').replace(/\/backend$/i, '');
@@ -149,9 +149,10 @@ export const useMultiEnterpriseLogic = () => {
         continue;
       }
 
-      // Единый расчёт: последовательный расход сырья по формулам + эффект «Технических училищ».
+      // Единый расчёт: последовательный расход сырья по формулам + эффект «Технических училищ»
+      // (признак — по землям этого предприятия; у добывающих его нет).
       const { from, to, change } = feedToPlant(formulas, requestArray, 'from', {
-        techSchoolsOpen: isTechSchoolsOpen(entry.plant?.plant_level ?? entry.fullPlantLevel),
+        techSchoolsOpen: !entry.isExtractive && techSchoolsOpenForPlant(entry.plant, entry.fullPlantLevel),
       });
 
       const resultTo = addResourceMeta(to, resources);
@@ -182,7 +183,8 @@ export const useMultiEnterpriseLogic = () => {
   const techSchoolsOpen = useMemo(
     () =>
       entries.some(
-        (entry) => !entry.isExtractive && isTechSchoolsOpen(entry.plant?.plant_level ?? entry.fullPlantLevel),
+        (entry) =>
+          !entry.isExtractive && techSchoolsOpenForPlant(entry.plant, entry.fullPlantLevel),
       ),
     [entries],
   );

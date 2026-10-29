@@ -71,3 +71,10 @@ export {
   SETTLEMENTS_TTL,
   REGIONS_TTL,
 } from './hooks/useSettlements';
+export { useUsers, fetchUsers, USERS_TTL } from './hooks/useUsers';
+export {
+  useNotifications,
+  fetchNotifications,
+  NOTIFICATIONS_TTL,
+  NOTIFICATIONS_POLL,
+} from './hooks/useNotifications';

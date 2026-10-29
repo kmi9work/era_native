@@ -8,10 +8,12 @@
  *   - сырьё расходуется ПОСЛЕДОВАТЕЛЬНО по формулам (на сервере — `res_array_sum!(request, from, -1)`),
  *     поэтому вторая формула видит остаток, а не весь ввод.
  *
- * Признак открытия технологии приходит вместе с уровнем предприятия — `plant_level.tech_schools_open`
- * (`eraofchange/app/views/plant_levels/_plant_level.json.jbuilder:2`, есть в `GET /plant_levels.json`,
- * `GET /plants/:id.json`; в `GET /guilds/:id.json` его НЕТ). Множитель 1.5 зашит так же, как в вебе
- * мастера (`era_front/src/stores/production.js:218`) и в клиенте игроков (`era_players`).
+ * Признак открытия технологии приходит вместе с предприятием — `plant.tech_schools_open`
+ * и `plant.plant_level.tech_schools_open` (посчитаны по государству ЗЕМЕЛЬ предприятия:
+ * `Plant#tech_schools_open?`, есть и в `GET /plants/:id.json`, и в `GET /guilds/:id.json`).
+ * Справочник `GET /plant_levels.json` отдаёт глобальный статус текущего государства.
+ * Множитель 1.5 зашит так же, как в вебе мастера (`era_front/src/stores/production.js:218`)
+ * и в клиенте игроков (`era_players`). Бонус — только перерабатывающим предприятиям.
  */
 
 export interface ResourceAmount {
@@ -50,6 +52,34 @@ export const TECH_SCHOOLS_MULTIPLIER = 1.5;
 export const isTechSchoolsOpen = (plantLevel: unknown): boolean => {
   const value = (plantLevel as { tech_schools_open?: unknown } | null | undefined)?.tech_schools_open;
   return value === true || value === 1;
+};
+
+/**
+ * «Технические училища» для КОНКРЕТНОГО предприятия: технология действует только
+ * на землях государства, где она открыта (открыта в Москве → бонус у предприятий
+ * на московских землях; на новгородских — нет). Сервер кладёт этот статус в
+ * `plant.tech_schools_open` и в `plant.plant_level.tech_schools_open` — оба
+ * посчитаны по государству места строительства (`Plant#tech_schools_open?`).
+ *
+ * Справочник `/plant_levels.json` отдаёт ГЛОБАЛЬНЫЙ статус текущего государства и
+ * здесь годится только как запасной вариант: приоритет у признака предприятия,
+ * иначе `false` из ответа предприятия перебивалось бы глобальным `true`.
+ *
+ * Бонус — только перерабатывающим: вызывающий код обязан не передавать `true`
+ * для добывающих предприятий (см. `is_extractive`).
+ */
+export const techSchoolsOpenForPlant = (plant: unknown, levelFallback?: unknown): boolean => {
+  const source = (plant ?? undefined) as
+    | { tech_schools_open?: unknown; plant_level?: unknown }
+    | undefined;
+  const flag = source?.tech_schools_open;
+  if (typeof flag === 'boolean') return flag;
+  if (flag === 1) return true;
+  if (flag === 0) return false;
+
+  const level = source?.plant_level;
+  if (level !== undefined && level !== null) return isTechSchoolsOpen(level);
+  return isTechSchoolsOpen(levelFallback);
 };
 
 export const resArrayMult = (resArray: ResourceAmount[] = [], n: number): ResourceAmount[] =>

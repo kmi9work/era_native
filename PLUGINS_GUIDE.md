@@ -158,6 +158,29 @@ ACTIVE_GAME=my-game
 BACKEND_URL=http://localhost:3000
 ```
 
+### Шаг 6: Добавьте productFlavor (иначе плагин не попадёт в APK)
+
+Ключ игры должен быть в `android/app/build.gradle` в `productFlavors`, иначе
+`era_scripts/build-prod.sh` не сможет собрать эту игру (скрипт определяет flavor
+по `buildConfigField ACTIVE_GAME` и печатает готовый блок, если его нет):
+
+```gradle
+        mygame {
+            dimension "game"
+            applicationIdSuffix ".mygame"
+            resValue "string", "app_name", "My Game"
+            buildConfigField "String", "ACTIVE_GAME", "\"my-game\""
+        }
+```
+
+Список игр в `build-prod.sh` не зашит: он берётся из реестра
+`era_scripts/lib/era-games.sh` (движки `eraofchange/engines/*` + каталоги
+`src/plugins/game-plugins/*`). Достаточно положить плагин в каталог, добавить
+инициализатор в `src/plugins/index.ts` и productFlavor — игра появится в меню
+сборки (`./era_scripts/build-prod.sh --list`). Схема iOS ищется по имени
+`.xcscheme`; если её нет, сборка идёт базовой схемой, а `ACTIVE_GAME` из
+`src/config.ts` всё равно включает плагин.
+
 ## Использование плагина
 
 ### Переопределение существующих экранов

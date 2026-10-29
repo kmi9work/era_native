@@ -27,6 +27,8 @@ jest.mock('../src/services/api', () => ({
   __esModule: true,
   default: {
     deleteArmy: jest.fn(() => Promise.resolve()),
+    deleteTroop: jest.fn(() => Promise.resolve()),
+    awardBattleVictory: jest.fn(() => Promise.resolve({ success: true, awarded: [] })),
     captureRegion: jest.fn(() => Promise.resolve()),
     setSettlementOwner: jest.fn(() => Promise.resolve()),
     getPlayers: jest.fn(),
@@ -176,6 +178,24 @@ const winCityBattle = (hook: { readonly current: BattleLogic }, settlementId = 1
   });
 };
 
+/**
+ * Поле 3×3 пехоты и броски «попадает только первый атакующий»: раунд
+ * заканчивается потерями, но обе стороны остаются в бою — можно проверить
+ * перерыв между раундами и накопление потерь.
+ */
+const setupWideFieldBattle = (hook: { readonly current: BattleLogic }) => {
+  mockData.armies = [
+    army(1, 'Нападающие', 1, 'Русь', ['Пехота', 'Пехота', 'Пехота']),
+    army(2, 'Защитники', 2, 'Тверь', ['Пехота', 'Пехота', 'Пехота']),
+  ];
+  act(() => hook.current.setPlaceKind('field'));
+  act(() => hook.current.goNext());
+  act(() => hook.current.addArmy(mockData.armies[0], 'attacker'));
+  act(() => hook.current.addArmy(mockData.armies[1], 'defender'));
+  act(() => hook.current.goNext());
+  act(() => hook.current.goNext());
+};
+
 const setupFieldBattle = (hook: { readonly current: BattleLogic }) => {
   act(() => hook.current.setPlaceKind('field'));
   act(() => hook.current.goNext());
@@ -203,6 +223,8 @@ describe('useBattleLogic', () => {
       ],
     };
     (ApiService.deleteArmy as jest.Mock).mockClear();
+    (ApiService.deleteTroop as jest.Mock).mockClear();
+    (ApiService.awardBattleVictory as jest.Mock).mockClear();
     (ApiService.captureRegion as jest.Mock).mockClear();
     (ApiService.setSettlementOwner as jest.Mock).mockClear();
   });
@@ -803,6 +825,185 @@ describe('useBattleLogic', () => {
     expect(hook.current.hits.defender).toBeGreaterThan(0);
     // Все кубики легли — повторная волна не нужна.
     expect(hook.current.canRollAll).toBe(false);
+
+    hook.unmount();
+  });
+
+  it('погибший в бою отряд удаляется на бэкенде только по подтверждению', async () => {
+    const hook = renderHook(() => useBattleLogic());
+
+    act(() => hook.current.setPlaceKind('city'));
+    act(() => hook.current.selectCountry(2));
+    act(() => hook.current.selectSettlement(10));
+    act(() => hook.current.goNext());
+    act(() => hook.current.addArmy(mockData.armies[0], 'attacker'));
+    act(() => hook.current.goNext());
+    act(() => hook.current.goNext());
+
+    const dice = [0.99, 0.5, 0.99];
+    act(() => hook.current.setRng(() => dice.shift() ?? 0.99));
+    act(() => hook.current.rollArmy(hook.current.attackers[0].uid));
+    act(() => hook.current.rollArmy(hook.current.defenders[0].uid));
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    act(() => hook.current.confirmCasualties());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+
+    // У атакующих погиб отряд с бэкенда (id 100), у гарнизона — пехота города
+    // (её на сервере нет, удалять нечего).
+    expect(hook.current.troopsToDestroy.map(troop => troop.troopId)).toEqual([100]);
+    expect(ApiService.deleteTroop).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await hook.current.confirmTroopDestruction();
+    });
+
+    expect(ApiService.deleteTroop).toHaveBeenCalledWith(100);
+    expect(hook.current.deletedTroopIds).toEqual([100]);
+    expect(hook.current.troopsConfirmed).toBe(true);
+    expect(hook.current.troopDeleteError).toBeNull();
+
+    hook.unmount();
+  });
+
+  it('погибшие отряды копятся по раундам, а не теряются между ними', () => {
+    const hook = renderHook(() => useBattleLogic());
+    setupWideFieldBattle(hook);
+
+    // Раунд 1: попадает только первый атакующий — гибнет один защитник (id 200).
+    const dice = [0.99, 0, 0, 0, 0, 0];
+    act(() => hook.current.setRng(() => dice.shift() ?? 0));
+    act(() => hook.current.rollAll());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    act(() => hook.current.confirmCasualties());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+
+    expect(hook.current.phase).toBe('retreat');
+    const afterFirst = hook.current.troopsToDestroy.map(troop => troop.troopId);
+    expect(afterFirst).toEqual([200]);
+
+    // Раунд 2: гибнет ещё один защитник — список пополняется, а не заменяется.
+    const dice2 = [0.99, 0, 0, 0, 0];
+    act(() => hook.current.setRng(() => dice2.shift() ?? 0));
+    act(() => hook.current.nextRound());
+    act(() => hook.current.rollAll());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    act(() => hook.current.confirmCasualties());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+
+    const ids = hook.current.troopsToDestroy.map(troop => troop.troopId);
+    expect(ids).toEqual([200, 201]);
+    // Один и тот же отряд в списке не дублируется.
+    expect(new Set(ids).size).toBe(ids.length);
+
+    hook.unmount();
+  });
+
+  it('закончить сражение в поле: уходят атакующие — финальный экран без города', () => {
+    const hook = renderHook(() => useBattleLogic());
+    setupFieldBattle(hook);
+
+    act(() => hook.current.setRng(() => 0));
+    act(() => hook.current.rollAll());
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+
+    expect(hook.current.phase).toBe('retreat');
+
+    act(() => hook.current.finishBattle('attacker'));
+
+    expect(hook.current.phase).toBe('finished');
+    expect(hook.current.outcome).toBe('attackers_retreated');
+    // Бой в поле: ни города, ни региона.
+    expect(hook.current.capturedCity).toBeNull();
+    expect(hook.current.annexation).toBeNull();
+    // Отступившую сторону не уничтожаем на бэкенде.
+    expect(hook.current.armiesToDestroy).toEqual([]);
+
+    hook.unmount();
+  });
+
+  it('закончить сражение за город: защищающиеся уходят — есть передача владельца', () => {
+    const hook = renderHook(() => useBattleLogic());
+
+    act(() => hook.current.setPlaceKind('city'));
+    act(() => hook.current.selectCountry(2));
+    act(() => hook.current.selectSettlement(10));
+    act(() => hook.current.goNext());
+    act(() => hook.current.addArmy(mockData.armies[0], 'attacker'));
+    act(() => hook.current.addArmy(mockData.armies[1], 'defender'));
+    act(() => hook.current.goNext());
+    act(() => hook.current.goNext());
+
+    // Попаданий нет — фаза отступления.
+    act(() => hook.current.setRng(() => 0));
+    act(() => hook.current.rollAll());
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+
+    expect(hook.current.phase).toBe('retreat');
+
+    act(() => hook.current.finishBattle('defender'));
+
+    expect(hook.current.phase).toBe('finished');
+    expect(hook.current.outcome).toBe('defenders_retreated');
+    // Город оставлен защищающимися: владелец меняется/снимается на итоговом экране.
+    expect(hook.current.capturedCity?.settlementId).toBe(10);
+    // Регион при уходе защищающихся не присоединяется — это делает веб-админка.
+    expect(hook.current.annexation).toBeNull();
+
+    hook.unmount();
+  });
+
+  it('влияние Воеводе начисляется по победившим и разбитым армиям бэкенда', async () => {
+    (ApiService.awardBattleVictory as jest.Mock).mockResolvedValueOnce({
+      success: true,
+      bonus: 4,
+      awarded: [{ id: 6, name: 'Волоцкий', country_id: 1, country_name: 'Москва', value: 4 }],
+    });
+
+    const hook = renderHook(() => useBattleLogic());
+    setupWideFieldBattle(hook);
+
+    // Один раунд с потерями — и мастер заканчивает бой: защищающиеся уходят.
+    const dice = [0.99, 0, 0, 0, 0, 0];
+    act(() => hook.current.setRng(() => dice.shift() ?? 0));
+    act(() => hook.current.rollAll());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    act(() => hook.current.confirmCasualties());
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    act(() => hook.current.finishBattle('defender'));
+
+    expect(hook.current.outcome).toBe('defenders_retreated');
+    // Победили атакующие — их армия на бэкенде (id 1).
+    expect(hook.current.winnerArmies.map(army => army.armyId)).toEqual([1]);
+
+    await act(async () => {
+      await hook.current.awardVoevodaInfluence();
+    });
+
+    expect(ApiService.awardBattleVictory).toHaveBeenCalledWith([1], []);
+    expect(hook.current.voevodaAwarded).toEqual([
+      { id: 6, name: 'Волоцкий', country_id: 1, country_name: 'Москва', value: 4 },
+    ]);
+    expect(hook.current.voevodaError).toBeNull();
 
     hook.unmount();
   });

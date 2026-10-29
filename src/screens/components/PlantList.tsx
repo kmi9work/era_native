@@ -67,6 +67,10 @@ export default function PlantList({
                 <Text style={styles.itemText}>
                   {plant.plant_level?.plant_type?.name || 'Предприятие'}
                 </Text>
+                {/* Земля, на которой построено предприятие (plant_place → region). */}
+                <Text style={styles.itemRegion}>
+                  {`Земля: ${plant.plant_place?.region_name || 'не указана'}`}
+                </Text>
                 <Text style={styles.itemSubtext}>
                   Уровень {plant.plant_level?.level || '?'} • ID: {plant.id}
                 </Text>
@@ -151,6 +155,12 @@ const styles = StyleSheet.create({
   itemSubtext: {
     fontSize: 13,
     color: '#666',
+    marginTop: 4,
+  },
+  itemRegion: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1565c0',
     marginTop: 4,
   },
   itemArrow: {

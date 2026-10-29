@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navig
 import PlantCostBlock from '../../screens/components/PlantCostBlock';
 import { usePlantBuilding } from '../hooks/usePlantBuilding';
 import PlaceBuildNotice from '../components/PlaceBuildNotice';
+import { sortPlacesForBuilding } from '../../services/plantTechnology';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -63,20 +64,16 @@ export default function PlantLocationScreen() {
     });
   };
 
-  const closedTechnologyNames = (plantTypeInfo?.technology_requirements || [])
-    .filter((req: any) => !req.open)
-    .map((req: any) => `«${req.name}»`);
+  // Порядок: вначале земли, где строительство разрешено и технология в государстве
+  // земли открыта; остальные — ниже (там же и предупреждение).
+  const places = useMemo(
+    () => sortPlacesForBuilding(plantTypeInfo?.available_places, plantTypeInfo?.technology_requirements),
+    [plantTypeInfo],
+  );
 
   return (
     <View style={styles.content}>
       <Text style={styles.stepTitle}>{plantTypeInfo?.plant_type_name}</Text>
-
-      {closedTechnologyNames.length > 0 && (
-        <Text style={styles.forbiddenNotice}>
-          Технология {closedTechnologyNames.join(', ')} не открыта — строительство запрещено правилами.
-          Продолжайте только по решению ведущего.
-        </Text>
-      )}
 
       <PlantCostBlock
         cost={(incomingFirstLevel || state.firstLevel)?.price || {}}
@@ -89,7 +86,7 @@ export default function PlantLocationScreen() {
         <ActivityIndicator size="large" color="#1976d2" />
       ) : (
         <ScrollView style={styles.placesList}>
-          {plantTypeInfo?.available_places?.map((place: any) => (
+          {places.map((place: any) => (
             <TouchableOpacity
               key={place.id}
               style={styles.itemButton}
@@ -98,7 +95,11 @@ export default function PlantLocationScreen() {
             >
               <View style={styles.itemButtonContent}>
                 <Text style={styles.itemButtonText}>{place.region_name}</Text>
-                <PlaceBuildNotice place={place} guildName={guildName} />
+                <PlaceBuildNotice
+                  place={place}
+                  guildName={guildName}
+                  technologyRequirements={plantTypeInfo?.technology_requirements}
+                />
               </View>
               <Text style={styles.itemButtonArrow}>›</Text>
             </TouchableOpacity>

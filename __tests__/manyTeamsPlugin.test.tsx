@@ -137,7 +137,6 @@ describe('плагин many_teams', () => {
     const tree = await renderOverlay();
     const text = collectText(tree.toJSON()).join(' | ');
 
-    expect(text).toContain('ТОЛЬКО в программе');
     expect(text).not.toContain('СТРОИТЕЛЬСТВО И РАБОТА ЗАПРЕЩЕНЫ');
 
     await act(async () => {
@@ -249,6 +248,67 @@ describe('предупреждение о запрете строительст�
     const tree = await renderNotice(<PlaceBuildNotice place={{ allowed: true, country_name: 'Москва' }} />);
 
     expect(tree.toJSON()).toBeNull();
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('пишет про технологию в государстве земли, если она там не открыта', async () => {
+    const tree = await renderNotice(
+      <PlaceBuildNotice
+        place={{
+          allowed: true,
+          country_name: 'Великий Новгород',
+          technology_requirements: [{ id: 3, name: 'Ремесловые люди', open: false }],
+        }}
+        technologyRequirements={[{ id: 3, name: 'Ремесловые люди', open: false, open_anywhere: true }]}
+      />,
+    );
+    const text = collectText(tree.toJSON()).join(' | ');
+
+    expect(text).toContain('«Ремесловые люди»');
+    expect(text).toContain('«Великий Новгород»');
+    expect(text).not.toContain('Запрещено строительство и работа');
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('молчит про технологию, если в государстве земли она открыта', async () => {
+    // Гильдии Москвы разрешено строить в Орде, и там технология открыта:
+    // ни запрета по разрешению, ни запрета по технологии быть не должно.
+    const tree = await renderNotice(
+      <PlaceBuildNotice
+        place={{
+          allowed: true,
+          country_name: 'Большая Орда',
+          technology_requirements: [{ id: 3, name: 'Ремесловые люди', open: true }],
+        }}
+        technologyRequirements={[{ id: 3, name: 'Ремесловые люди', open: false, open_anywhere: true }]}
+      />,
+    );
+
+    expect(tree.toJSON()).toBeNull();
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('без статуса у места берёт статус типа и не называет государство', async () => {
+    const tree = await renderNotice(
+      <PlaceBuildNotice
+        place={{ allowed: undefined }}
+        technologyRequirements={[{ id: 3, name: 'Ремесловые люди', open: false }]}
+      />,
+    );
+    const text = collectText(tree.toJSON()).join(' | ');
+
+    expect(text).toContain('«Ремесловые люди»');
+    expect(text).toContain('запрещено правилами');
+    expect(text).not.toContain('в государстве');
 
     await act(async () => {
       tree.unmount();

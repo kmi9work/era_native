@@ -147,10 +147,6 @@ export default function PlantConfirmScreen() {
     }
   };
 
-  const closedTechnologyNames = (plantTypeInfo?.technology_requirements || [])
-    .filter((req: any) => !req.open)
-    .map((req: any) => `«${req.name}»`);
-
   return (
     <View style={styles.content}>
       <Text style={styles.stepTitle}>Подтверждение строительства</Text>
@@ -163,13 +159,14 @@ export default function PlantConfirmScreen() {
         <Text style={styles.confirmValue}>{place?.region_name || 'Не выбрано'}</Text>
       </View>
 
-      {closedTechnologyNames.length > 0 && (
-        <Text style={styles.forbiddenNotice}>
-          Технология {closedTechnologyNames.join(', ')} не открыта — строительство запрещено правилами.
-        </Text>
-      )}
-
-      <PlaceBuildNotice place={place} guildName={guildName} style={styles.forbiddenNotice} />
+      {/* Предупреждения — по выбранной земле: разрешение гильдии и технология в
+          государстве именно этой земли (см. PlaceBuildNotice). */}
+      <PlaceBuildNotice
+        place={place}
+        guildName={guildName}
+        technologyRequirements={plantTypeInfo?.technology_requirements}
+        style={styles.forbiddenNotice}
+      />
 
       <PlantCostBlock
         cost={firstLevel?.price || {}}

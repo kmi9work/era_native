@@ -14,6 +14,7 @@ import { useGuildManagement } from '../hooks/useGuildManagement';
 import DataFreshnessBadge from '../../components/DataFreshnessBadge';
 import { queryKeys } from '../../data/keys';
 import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
+import { Guild } from '../../types';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -90,6 +91,21 @@ export default function GuildSelectionScreen() {
     });
   };
 
+  // Предприятия гильдии: сколько построено и максимум из настроек игры.
+  // Максимум 0/отсутствует — лимит не задан, показываем только число.
+  const plantsCount = (guild: Guild) => guild.plants_count ?? guild.plants?.length ?? 0;
+  const plantsLimit = (guild: Guild) => guild.plants_limit ?? 0;
+  const atPlantsLimit = (guild: Guild) => {
+    const limit = plantsLimit(guild);
+    return limit > 0 && plantsCount(guild) >= limit;
+  };
+  const plantsLabel = (guild: Guild) => {
+    const limit = plantsLimit(guild);
+    return limit > 0
+      ? `Предприятий: ${plantsCount(guild)} из ${limit}`
+      : `Предприятий: ${plantsCount(guild)}`;
+  };
+
   return (
     <View style={styles.content}>
       <Text style={styles.stepTitle}>Выберите гильдию</Text>
@@ -128,7 +144,14 @@ export default function GuildSelectionScreen() {
               activeOpacity={0.7}
               onPress={() => handleSelectGuild(guild)}
             >
-              <Text style={styles.itemButtonText}>{guild.name}</Text>
+              <View style={styles.itemButtonContent}>
+                <Text style={styles.itemButtonText}>{guild.name}</Text>
+                <Text
+                  style={[styles.itemButtonMeta, atPlantsLimit(guild) && styles.itemButtonMetaWarning]}
+                >
+                  {plantsLabel(guild)}{atPlantsLimit(guild) ? ' — максимум' : ''}
+                </Text>
+              </View>
               <Text style={styles.itemButtonArrow}>›</Text>
             </TouchableOpacity>
           ))}
@@ -186,11 +209,22 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     minHeight: 60,
   },
+  itemButtonContent: {
+    flex: 1,
+  },
   itemButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
-    flex: 1,
+  },
+  itemButtonMeta: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#666',
+  },
+  itemButtonMetaWarning: {
+    color: '#c62828',
+    fontWeight: '700',
   },
   itemButtonArrow: {
     fontSize: 24,

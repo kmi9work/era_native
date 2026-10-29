@@ -106,6 +106,15 @@ android {
             resValue "string", "app_name", "Artel"
             buildConfigField "String", "ACTIVE_GAME", "\"artel\""
         }
+        // Плагин src/plugins/game-plugins/many_teams (игра «Много команд»).
+        // Значение ACTIVE_GAME должно совпадать с GAME_KEY плагина и с ключом
+        // движка many_teams в реестре era_scripts/lib/era-games.sh.
+        manyteams {
+            dimension "game"
+            applicationIdSuffix ".manyteams"
+            resValue "string", "app_name", "Many Teams"
+            buildConfigField "String", "ACTIVE_GAME", "\"many-teams\""
+        }
     }
     signingConfigs {
         debug {

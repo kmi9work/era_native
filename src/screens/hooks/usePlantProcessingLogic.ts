@@ -9,7 +9,7 @@ import { queryKeys } from '../../data/keys';
 import { queryClient } from '../../data/queryClient';
 import ApiService from '../../services/api';
 import { CONFIG } from '../../config';
-import { feedToPlant, isTechSchoolsOpen } from '../../services/plantProduction';
+import { feedToPlant, techSchoolsOpenForPlant } from '../../services/plantProduction';
 
 // Все уникальные входные ресурсы из всех формул
 const deriveFormulaFrom = (formulas: any[]): any[] => {
@@ -162,9 +162,10 @@ export const usePlantProcessingLogic = () => {
       }
 
       const isExtractive = getIsExtractive(data);
-      // Признак технологии берём и из справочника уровней, и из самого предприятия: в ответе
-      // уровня он есть всегда, в /guilds/:id.json — нет (там plant_level собирается вручную).
-      const techSchoolsOpen = isTechSchoolsOpen(fullPlantLevel) || isTechSchoolsOpen(data.plant_level);
+      // «Технические училища» — по государству ЗЕМЕЛЬ предприятия (признак из ответа
+      // предприятия, приоритетнее глобального справочника уровней) и только для
+      // перерабатывающих: добывающим бонус не прибавляется и плашка не показывается.
+      const techSchoolsOpen = !isExtractive && techSchoolsOpenForPlant(data, fullPlantLevel);
 
       // Список гильдий тоже берём из слоя, а не из локальной копии.
       if (queryClient.getQueryData(queryKeys.guilds()) === undefined) {

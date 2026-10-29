@@ -22,6 +22,8 @@ export interface EnterpriseData {
   plant_place_id: number;
   economic_subject_id: number;
   economic_subject_type: string;
+  /** «Технические училища» на землях ЭТОГО предприятия (Plant#tech_schools_open?). */
+  tech_schools_open?: boolean;
   plant_level?: {
     level: number;
     plant_type?: {
@@ -29,10 +31,16 @@ export interface EnterpriseData {
       name: string;
     };
     formulas?: any[];
+    tech_schools_open?: boolean;
   };
   plant_place?: {
+    id?: number;
     name: string;
-    region_name: string;
+    /** Земля, на которой построено предприятие (region). */
+    region_id?: number;
+    region_name?: string;
+    region_country_id?: number;
+    region_country_name?: string;
   };
   economic_subject?: any;
 }

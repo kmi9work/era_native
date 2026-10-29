@@ -12,6 +12,7 @@ import { usePlantBuilding } from '../hooks/usePlantBuilding';
 import DataFreshnessBadge from '../../components/DataFreshnessBadge';
 import { queryKeys } from '../../data/keys';
 import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
+import { closedGuildTechnologyNames, formatTechnologyNames } from '../../services/plantTechnology';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -52,10 +53,14 @@ export default function NewPlantTypeScreen() {
 
   const filteredPlants = getFilteredPlantTypes();
 
+  /**
+   * «Технология не открыта» показываем только если у гильдии НЕТ страны, где ей
+   * разрешено строительство и технология открыта (поле `open_anywhere` от
+   * бэкенда). Пример: гильдии Москвы можно строить в Орде, и если там
+   * «Ремесловые люди» открыты — запрета на экране быть не должно.
+   */
   const getClosedTechnologyNames = (info: any): string[] => {
-    return (info?.technology_requirements || [])
-      .filter((req: any) => !req.open)
-      .map((req: any) => `«${req.name}»`);
+    return closedGuildTechnologyNames(info?.technology_requirements);
   };
 
   const handleSelectPlantType = async (plantType: any) => {
@@ -147,7 +152,8 @@ export default function NewPlantTypeScreen() {
                   )}
                   {closedTechnologyNames.length > 0 && (
                     <Text style={styles.forbiddenNotice}>
-                      Технология {closedTechnologyNames.join(', ')} не открыта — строительство запрещено правилами
+                      Технология {formatTechnologyNames(closedTechnologyNames)} не открыта —
+                      строительство запрещено правилами
                     </Text>
                   )}
                 </View>

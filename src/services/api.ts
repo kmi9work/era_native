@@ -1,7 +1,16 @@
 import axios from 'axios';
 import { CONFIG } from '../config';
 import { ApiErrorException, normalizeError } from '../data/apiErrors';
-import type { Army, Country, Player, Region, Settlement } from '../types';
+import type {
+  AppNotification,
+  AppUser,
+  Army,
+  Country,
+  Player,
+  Region,
+  Settlement,
+  VoevodaAwardResult,
+} from '../types';
 
 // Declare btoa for React Native compatibility
 declare var btoa: (str: string) => string;
@@ -251,12 +260,40 @@ class ApiService {
   }
 
   /**
+   * Уничтожить отряд (DELETE /troops/:id) — погиб в бою на экране «Сражения».
+   * Тот же вызов, что кнопка удаления отряда в веб-админке.
+   */
+  async deleteTroop(troopId: number): Promise<void> {
+    await this.api.delete(`/troops/${troopId}.json`);
+  }
+
+  /**
+   * Влияние Воеводе за сражение: `PATCH /armies/award_battle_victory.json` со
+   * списками победивших и разбитых армий. Бой на экране «Сражения» считается на
+   * клиенте, поэтому серверное `Army#attack` (веб-админка) не вызывается — без
+   * этого вызова Воевода оставался без бонуса. Сервер начисляет +4 за каждую
+   * разбитую армию противника и −1 за каждую разбитую армию своего государства;
+   * гарнизон города армией не является и в списки не попадает.
+   */
+  async awardBattleVictory(
+    armyIds: number[],
+    defeatedArmyIds: number[] = [],
+  ): Promise<VoevodaAwardResult> {
+    const response = await this.api.patch('/armies/award_battle_victory.json', null, {
+      params: { army_ids: armyIds, defeated_army_ids: defeatedArmyIds },
+      paramsSerializer: { indexes: null },
+    });
+    return response.data;
+  }
+
+  /**
    * Передать регион государству — тот же вызов, что делает веб-админка
    * («Политика» → передача региона, `era_front/.../CaptureRegion.vue`):
    * `PATCH /regions/:id/captured_by.json?country_id=&how=`.
-   * `how`: 1 — войной, 0 — миром. Бэкенд отвечает 204 без тела.
-   * Бонус Великому князю (`grand_prince_bonus`) клиент не запрашивает: в вебе это
-   * отдельный вопрос мастеру, здесь решение по умолчанию — без бонуса.
+   * `how`: 1 — войной, 0 — миром. Бэкенд отвечает JSON с итогом передачи.
+   * Влияние за землю (Посольский дьяк +7, Князь +5) клиент не запрашивает: в вебе
+   * это отдельный вопрос мастеру на каждую должность, здесь решение по умолчанию —
+   * без влияния (`awarded` пуст).
    */
   async captureRegion(regionId: number, countryId: number, byWar = true): Promise<void> {
     await this.api.patch(`/regions/${regionId}/captured_by.json`, null, {
@@ -317,6 +354,34 @@ class ApiService {
       signal,
     });
     return response.data;
+  }
+
+  /**
+   * Пользователи игры (мастера): GET /users.json. Нужны для выбора «кто я» в
+   * настройках планшета — как выбор пользователя в шапке веб-админки.
+   */
+  async getUsers(signal?: AbortSignal): Promise<AppUser[]> {
+    const response = await this.api.get('/users.json', { signal });
+    return Array.isArray(response.data) ? response.data : [];
+  }
+
+  /**
+   * Неподтверждённые уведомления мастера: GET /notifications.json?user_id=&status=pending.
+   * user_id передаётся явно: у планшета нет общей сессии с вебом.
+   */
+  async getNotifications(userId: number, signal?: AbortSignal): Promise<AppNotification[]> {
+    const response = await this.api.get('/notifications.json', {
+      params: { user_id: userId, status: 'pending' },
+      signal,
+    });
+    return Array.isArray(response.data) ? response.data : [];
+  }
+
+  /** «Ок» в окне уведомления: PATCH /notifications/:id/acknowledge.json */
+  async acknowledgeNotification(notificationId: number, userId: number): Promise<void> {
+    await this.api.patch(`/notifications/${notificationId}/acknowledge.json`, null, {
+      params: { user_id: userId },
+    });
   }
 
   // Зарегистрировать караван

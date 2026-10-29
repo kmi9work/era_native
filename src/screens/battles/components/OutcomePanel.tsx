@@ -1,5 +1,6 @@
 /**
- * Итог сражения: уничтожение разбитых армий, взятый город и присоединение региона.
+ * Итог сражения: уничтожение разбитых армий и погибших отрядов, влияние Воеводе,
+ * взятый город и присоединение региона.
  *
  * Три независимых действия мастера после взятия города (порядок произвольный):
  *  1. снять владельца города (`PATCH /settlements/:id`, player_id пустой);
@@ -30,6 +31,20 @@ const OutcomePanel: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
 
   const destroyedSideLabel =
     logic.outcome === 'attackers_destroyed' ? 'нападающих' : 'защищающихся';
+
+  const askDestroyTroops = () => {
+    const label = logic.troopsToDestroy.length === 1 ? 'отряд' : 'отрядов';
+    Alert.alert(
+      'Уничтожить отряды?',
+      `${logic.troopsToDestroy.length} ${label} погибли в бою и будут удалены на бэкенде:\n\n${logic.troopsToDestroy
+        .map(troop => `${troop.name} — ${troop.armyName}`)
+        .join(', ')}`,
+      [
+        { text: 'Отмена', style: 'cancel' },
+        { text: 'Уничтожить', style: 'destructive', onPress: () => void logic.confirmTroopDestruction() },
+      ],
+    );
+  };
 
   const askDestroy = () => {
     const names = logic.armiesToDestroy.map(army => `${army.name} (${army.ownerName})`);
@@ -77,13 +92,112 @@ const OutcomePanel: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
         </View>
       ) : null}
 
+      {logic.troopsToDestroy.length > 0 ? (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>Погибшие отряды</Text>
+          {logic.troopsToDestroy.map(troop => (
+            <Text key={`troop-${troop.troopId}`} style={styles.blockLine}>
+              • {troop.name} — армия {troop.armyName}
+            </Text>
+          ))}
+          {!logic.troopsConfirmed ? (
+            <TouchableOpacity
+              style={styles.dangerButton}
+              onPress={askDestroyTroops}
+              disabled={logic.troopDeleteBusy}
+            >
+              {logic.troopDeleteBusy ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={styles.dangerButtonText}>
+                  Уничтожить отряды ({logic.troopsToDestroy.length})
+                </Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.done}>
+              {logic.deletedTroopIds.length > 0
+                ? `Уничтожено отрядов на бэкенде: ${logic.deletedTroopIds.length}`
+                : 'Отрядов для удаления на бэкенде нет'}
+            </Text>
+          )}
+          {logic.troopDeleteError ? (
+            <Text style={styles.error}>Ошибка: {logic.troopDeleteError}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {logic.outcome ? (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>Влияние Воеводе за победу</Text>
+          <Text style={styles.blockLine}>
+            Победившие армии:{' '}
+            {logic.winnerArmies.length > 0
+              ? logic.winnerArmies.map(army => `${army.name} (${army.ownerName})`).join(', ')
+              : 'нет армий на бэкенде'}
+          </Text>
+          <Text style={styles.blockLine}>
+            Разбитые армии:{' '}
+            {logic.defeatedArmies.length > 0
+              ? logic.defeatedArmies.map(army => `${army.name} (${army.ownerName})`).join(', ')
+              : 'нет'}
+          </Text>
+          <Text style={styles.blockLine}>
+            Воевода победителя получает +4 за каждую разбитую армию противника, Воевода
+            проигравшего — −1 за каждую разбитую армию своего государства. Гарнизон города
+            армией не считается.
+          </Text>
+
+          {logic.voevodaAwarded === null ? (
+            <TouchableOpacity
+              style={[
+                styles.primaryButton,
+                logic.voevodaBusy || logic.winnerArmies.length === 0
+                  ? styles.primaryButtonDisabled
+                  : null,
+              ]}
+              onPress={() => {
+                void logic.awardVoevodaInfluence();
+              }}
+              disabled={logic.voevodaBusy || logic.winnerArmies.length === 0}
+            >
+              {logic.voevodaBusy ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Начислить влияние Воеводе</Text>
+              )}
+            </TouchableOpacity>
+          ) : logic.voevodaAwarded.length > 0 ? (
+            <Text style={styles.done}>
+              Начислено:{' '}
+              {logic.voevodaAwarded
+                .map(player => `${player.name} (+${player.value ?? 0})`)
+                .join(', ')}
+            </Text>
+          ) : (
+            <Text style={styles.blockLine}>
+              Влияние не начислено: разбитых армий на бэкенде нет — гарнизон города армией не
+              считается.
+            </Text>
+          )}
+          {logic.voevodaError ? (
+            <Text style={styles.error}>Ошибка: {logic.voevodaError}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
       {logic.capturedCity ? (
         <View style={styles.block}>
           <Text style={styles.blockTitle}>Город {logic.capturedCity.name} захвачен</Text>
           <Text style={styles.blockLine}>
             Владелец: {logic.capturedCity.owner ? logic.capturedCity.owner.name : 'нет'}
           </Text>
-          {logic.capturedCity.isCapital ? null : (
+          {logic.outcome === 'defenders_retreated' ? (
+            <Text style={styles.blockLine}>
+              Защищающиеся оставили город: регион остаётся за прежним государством — присоединение
+              региона оформляется в веб-админке.
+            </Text>
+          ) : logic.capturedCity.isCapital ? null : (
             <Text style={styles.blockLine}>
               Столица государства не взята — регион не переходит.
             </Text>

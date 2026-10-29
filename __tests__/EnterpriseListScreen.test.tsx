@@ -102,6 +102,7 @@ describe('EnterpriseListScreen («Предприятия гильдии»)', () 
 
     const texts = textsOf(tree);
     expect(texts).toContain('Лесопилка');
+    expect(texts).toContain('Земля: Регион');
     expect(texts).not.toContain('У гильдии пока нет предприятий');
     expect(texts).not.toContain('нет связи');
     expect(texts.some((text) => text.startsWith('обновлено'))).toBe(true);
@@ -141,6 +142,38 @@ describe('EnterpriseListScreen («Предприятия гильдии»)', () 
 
     expect(ApiService.getGuildPlants).toHaveBeenCalledTimes(2);
     expect(ApiService.getGuildPlants).toHaveBeenLastCalledWith(12, expect.anything());
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('предупреждает на кнопке «Новое предприятие», если достигнут максимум', async () => {
+    (ApiService.getGuilds as jest.Mock).mockResolvedValueOnce([
+      { id: 12, name: 'Тестовая гильдия', plants_count: 1, plants_limit: 1 },
+    ]);
+
+    const tree = await renderScreen();
+    // Текст на кнопке собран из нескольких Text-узлов — склеиваем без разделителя.
+    const text = textsOf(tree).join('');
+
+    expect(text).toContain('Достигнут максимум предприятий (1 из 1)');
+    expect(text).toContain('только с согласования мастера');
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('не предупреждает, пока предприятий меньше максимума', async () => {
+    (ApiService.getGuilds as jest.Mock).mockResolvedValueOnce([
+      { id: 12, name: 'Тестовая гильдия', plants_count: 1, plants_limit: 5 },
+    ]);
+
+    const tree = await renderScreen();
+    const text = textsOf(tree).join('');
+
+    expect(text).not.toContain('Достигнут максимум предприятий');
 
     await act(async () => {
       tree.unmount();

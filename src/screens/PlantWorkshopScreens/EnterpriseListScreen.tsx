@@ -13,6 +13,8 @@ import { useEnterpriseManagement, EnterpriseData } from '../hooks/useEnterpriseM
 import DataFreshnessBadge from '../../components/DataFreshnessBadge';
 import { queryKeys } from '../../data/keys';
 import { useRefetchOnFocus } from '../../data/useRefetchOnFocus';
+import { useGuilds } from '../../data';
+import { Guild } from '../../types';
 
 type PlantWorkshopStackParamList = {
   GuildSelection: undefined;
@@ -43,6 +45,18 @@ export default function EnterpriseListScreen() {
   // подписывается ниже через useRefetchOnFocus и показывает в шильдике свежести.
   const { state, loadGuildPlants, selectPlant, deletePlant } = useEnterpriseManagement(guildId);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Максимум предприятий у гильдии — из настроек игры (в /guilds.json приходят
+  // plants_limit и plants_count). Правило мягкое: кнопка не блокируется, а
+  // предупреждает, что сверх лимита строительство — только с согласования мастера.
+  const guildsQuery = useGuilds();
+  const guildInfo = ((guildsQuery.data as Guild[] | undefined) ?? []).find(item => item.id === guildId);
+  const plantsLimit = guildInfo?.plants_limit ?? 0;
+  // Пока список предприятий грузится — число из /guilds.json; после загрузки
+  // считаем по фактическому списку (иначе после удаления всех предприятий
+  // осталось бы предупреждение от устаревшего счётчика).
+  const plantsCount = state.loading ? (guildInfo?.plants_count ?? 0) : state.guildPlants.length;
+  const plantsLimitReached = plantsLimit > 0 && plantsCount >= plantsLimit;
 
   // Возврат на список (после улучшения, скана, создания) перечитывает предприятия гильдии.
   useRefetchOnFocus([queryKeys.guildPlants(guildId)]);
@@ -81,12 +95,6 @@ export default function EnterpriseListScreen() {
 
   return (
     <View style={styles.content}>
-      <Text style={styles.stepTitle}>Предприятия гильдии</Text>
-
-      <View style={styles.statusRow}>
-        <DataFreshnessBadge keys={[queryKeys.guildPlants(guildId)]} />
-      </View>
-
       {state.loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#1976d2" />
@@ -105,13 +113,19 @@ export default function EnterpriseListScreen() {
 
       {/* Кнопка "Новое предприятие" */}
       <TouchableOpacity
-        style={styles.scenarioButton}
+        style={[styles.scenarioButton, plantsLimitReached && styles.scenarioButtonAtLimit]}
         activeOpacity={0.7}
         onPress={() => navigation.navigate('NewPlantType', { guildId, guildName })}
       >
         <Text style={styles.scenarioButtonIcon}>➕</Text>
         <View style={styles.scenarioButtonContent}>
           <Text style={styles.scenarioButtonText}>Новое предприятие</Text>
+          {plantsLimitReached && (
+            <Text style={styles.scenarioButtonWarning}>
+              Достигнут максимум предприятий ({plantsCount} из {plantsLimit}). Строительство —
+              только с согласования мастера.
+            </Text>
+          )}
         </View>
       </TouchableOpacity>
     </View>
@@ -153,6 +167,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
+  },
+  scenarioButtonAtLimit: {
+    backgroundColor: '#fff4e5',
+    borderWidth: 2,
+    borderColor: '#ef6c00',
+  },
+  scenarioButtonWarning: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#c62828',
   },
   loadingContainer: {
     flex: 1,

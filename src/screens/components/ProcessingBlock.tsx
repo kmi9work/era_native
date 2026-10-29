@@ -44,7 +44,9 @@ export default function ProcessingBlock({
         {isExtractive ? 'Добыча' : 'Переработка'}
       </Text>
 
-      <TechSchoolsNotice open={state.techSchoolsOpen} applied={!isExtractive} />
+      {/* «Технические училища» действуют только на перерабатывающих предприятиях
+          (выход ×1.5): в разделе «Добыча» плашки нет вообще. */}
+      {!isExtractive && <TechSchoolsNotice open={state.techSchoolsOpen} />}
 
       {isExtractive ? (
         // Режим "Добыча" — упрощённый вид, только результат

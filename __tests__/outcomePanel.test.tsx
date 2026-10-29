@@ -6,7 +6,7 @@
  * победитель, выбор страны при союзниках, кнопка передачи региона и результат.
  */
 import React from 'react';
-import { Text, TouchableOpacity } from 'react-native';
+import { Alert, Text, TouchableOpacity } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import OutcomePanel from '../src/screens/battles/components/OutcomePanel';
 import type { BattleLogic } from '../src/screens/hooks/useBattleLogic';
@@ -75,6 +75,21 @@ const makeLogic = (overrides: Record<string, any> = {}): BattleLogic => {
     // Взятый город и его владелец: по умолчанию блока нет — тесты панели итога
     // про регион его не требуют.
     capturedCity: null,
+    // Погибшие отряды и влияние Воеводе: по умолчанию блоков нет — тесты про
+    // регион и владельца их не требуют.
+    troopsToDestroy: [],
+    troopsConfirmed: false,
+    troopDeleteBusy: false,
+    troopDeleteError: null,
+    deletedTroopIds: [],
+    confirmTroopDestruction: jest.fn(async () => {}),
+    finishBattle: jest.fn(),
+    winnerArmies: [],
+    defeatedArmies: [],
+    voevodaBusy: false,
+    voevodaError: null,
+    voevodaAwarded: null,
+    awardVoevodaInfluence: jest.fn(async () => {}),
     ownerChoices: [],
     cityOwnerBusy: false,
     cityOwnerError: null,
@@ -320,6 +335,126 @@ describe('итог боя: владелец взятого города', () => 
         'Сначала присоедините регион, затем назначайте владельца: при передаче региона другому государству владельцы поселений снимаются.',
       ]),
     );
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+});
+
+describe('итог боя: погибшие отряды и влияние Воеводе', () => {
+  const fallen = [
+    { troopId: 101, kind: 'infantry', name: 'Пехота', armyName: 'Рюрикович', armyUid: 'army1', armyId: 1 },
+    { troopId: 102, kind: 'cavalry', name: 'Конница', armyName: 'Рюрикович', armyUid: 'army1', armyId: 1 },
+  ];
+
+  it('перечисляет погибшие отряды и уничтожает их только по подтверждению', () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const logic = makeLogic({ outcome: 'attackers_destroyed', annexation: null, troopsToDestroy: fallen });
+    const tree = render(logic);
+
+    const shown = texts(tree).join(' | ');
+    expect(shown).toContain('Погибшие отряды');
+    expect(shown).toContain('Пехота — армия Рюрикович');
+    expect(shown).toContain('Конница — армия Рюрикович');
+    expect(shown).toContain('Уничтожить отряды (2)');
+
+    // До подтверждения на бэкенд ничего не уходит.
+    expect(logic.confirmTroopDestruction).not.toHaveBeenCalled();
+
+    press(tree, 'Уничтожить отряды (2)');
+    const buttons = alertSpy.mock.calls[0][2] as Array<{ text: string; onPress?: () => void }>;
+    const confirm = buttons.find(button => button.text === 'Уничтожить');
+    expect(confirm).toBeTruthy();
+    confirm?.onPress?.();
+    expect(logic.confirmTroopDestruction).toHaveBeenCalledTimes(1);
+
+    alertSpy.mockRestore();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('после уничтожения показывает число удалённых отрядов', () => {
+    const logic = makeLogic({
+      outcome: 'attackers_destroyed',
+      annexation: null,
+      troopsToDestroy: fallen,
+      troopsConfirmed: true,
+      deletedTroopIds: [101, 102],
+    });
+    const tree = render(logic);
+
+    expect(texts(tree)).toContain('Уничтожено отрядов на бэкенде: 2');
+    expect(texts(tree)).not.toContain('Уничтожить отряды (2)');
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('влияние Воеводе: кнопка, ошибка «воеводы нет» и начисленный список', () => {
+    const winnerArmies = [{ uid: 'army1', armyId: 1, name: 'Рюрикович', ownerName: 'Волоцкий' }];
+    const defeatedArmies = [{ uid: 'army2', armyId: 2, name: 'Тверская дружина', ownerName: 'Тверской' }];
+
+    const waitingLogic = makeLogic({ annexation: null, winnerArmies, defeatedArmies });
+    const waiting = render(waitingLogic);
+    expect(texts(waiting).join(' | ')).toContain('Влияние Воеводе за победу');
+    expect(texts(waiting).join(' | ')).toContain('Рюрикович (Волоцкий)');
+    // Разбитые армии показываются мастеру: за каждую идёт +4 победителю и −1 проигравшему.
+    expect(texts(waiting).join(' | ')).toContain('Разбитые армии: Тверская дружина (Тверской)');
+    press(waiting, 'Начислить влияние Воеводе');
+    expect(waitingLogic.awardVoevodaInfluence).toHaveBeenCalledTimes(1);
+    act(() => {
+      waiting.unmount();
+    });
+
+    const nobody = render(makeLogic({ annexation: null, voevodaAwarded: [] }));
+    expect(texts(nobody).join(' | ')).toContain(
+      'Влияние не начислено: разбитых армий на бэкенде нет — гарнизон города армией не считается.',
+    );
+    act(() => {
+      nobody.unmount();
+    });
+
+    const awarded = render(
+      makeLogic({
+        annexation: null,
+        voevodaAwarded: [{ id: 6, name: 'Волоцкий', value: 4 }],
+      }),
+    );
+    expect(texts(awarded)).toContain('Начислено: Волоцкий (+4)');
+    act(() => {
+      awarded.unmount();
+    });
+  });
+
+  it('защищающиеся оставили город: передача владельца есть, регион не присоединяется', () => {
+    const logic = makeLogic({
+      outcome: 'defenders_retreated',
+      annexation: null,
+      capturedCity: {
+        settlementId: 10,
+        name: 'Тверь',
+        regionId: 20,
+        isCapital: true,
+        owner: { id: 9, name: 'Прежний владелец' },
+        attackerPlayerIds: [5],
+      },
+    });
+    const tree = render(logic);
+
+    const shown = texts(tree);
+    expect(shown).toContain('Защищающиеся отступили');
+    expect(shown).toEqual(
+      expect.arrayContaining([
+        'Город Тверь захвачен',
+        'Снять владельца',
+        'Назначить владельца',
+        'Защищающиеся оставили город: регион остаётся за прежним государством — присоединение региона оформляется в веб-админке.',
+      ]),
+    );
+    expect(shown).not.toContain('Присоединить регион');
 
     act(() => {
       tree.unmount();

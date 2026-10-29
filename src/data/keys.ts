@@ -47,6 +47,14 @@ export const queryKeys = {
   regions: (): QueryKey => ['regions'],
   /** Все игроки игры: GET /players.json — назначение владельца города */
   players: (): QueryKey => ['players'],
+  /** Пользователи игры (мастера): GET /users.json — выбор «кто я» в настройках */
+  users: (): QueryKey => ['users'],
+  /**
+   * Неподтверждённые уведомления мастера: GET /notifications.json?user_id=
+   * Пользователь — часть ключа: у двух мастеров на одном планшете разные окна,
+   * и общий ключ показывал бы чужое уведомление из кэша.
+   */
+  notifications: (userId?: number | null): QueryKey => ['notifications', userId ?? 'none'],
 };
 
 /** Строковые представления ключей (для логов). */

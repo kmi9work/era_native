@@ -32,7 +32,6 @@ many_teams/
 ├── services/guildWorkshop.ts      # GET /many_teams/guilds/:id/workshop
 ├── hooks/useGuildWorkshop.ts      # ключ слоя данных + TTL/опрос
 ├── components/
-│   ├── MastersNotice.tsx          # надпись для мастеров
 │   ├── BuildCountriesNotice.tsx   # где гильдии разрешено строить и работать
 │   ├── WorkForbiddenBanner.tsx    # отметка на списках предприятий
 │   ├── PlantWorkNotice.tsx        # плашка на «Улучшении предприятия»

@@ -11,6 +11,7 @@ import {
   countRequest,
   feedToPlant,
   isTechSchoolsOpen,
+  techSchoolsOpenForPlant,
   TECH_SCHOOLS_MULTIPLIER,
 } from '../src/services/plantProduction';
 
@@ -160,5 +161,27 @@ describe('countRequest', () => {
 
     expect(from).toEqual([{ identificator: 'timber', count: 10 }]);
     expect(to).toEqual([{ identificator: 'boards', count: 15 }]);
+  });
+});
+
+
+describe('techSchoolsOpenForPlant («Технические училища» по землям предприятия)', () => {
+  it('признак предприятия приоритетнее глобального справочника уровней', () => {
+    // Предприятие на новгородских землях, технология открыта в Москве (глобальный
+    // справочник уровней говорит true) — бонуса у этого предприятия быть не должно.
+    const plant = { tech_schools_open: false, plant_level: { tech_schools_open: false } };
+
+    expect(techSchoolsOpenForPlant(plant, { tech_schools_open: true })).toBe(false);
+  });
+
+  it('открыта на землях предприятия — бонус есть', () => {
+    expect(techSchoolsOpenForPlant({ plant_level: { tech_schools_open: true } })).toBe(true);
+    expect(techSchoolsOpenForPlant({ tech_schools_open: 1 })).toBe(true);
+  });
+
+  it('без признака предприятия падает на запасной уровень, а без него — false', () => {
+    expect(techSchoolsOpenForPlant({}, { tech_schools_open: true })).toBe(true);
+    expect(techSchoolsOpenForPlant({})).toBe(false);
+    expect(techSchoolsOpenForPlant(null, { tech_schools_open: true })).toBe(true);
   });
 });

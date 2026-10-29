@@ -10,7 +10,7 @@ import { queryKeys } from '../../data/keys';
 import { queryClient } from '../../data/queryClient';
 import { useBarcodeScannerContext } from '../../context/BarcodeScannerContext';
 import ApiService from '../../services/api';
-import { feedToPlant, isTechSchoolsOpen } from '../../services/plantProduction';
+import { feedToPlant, techSchoolsOpenForPlant } from '../../services/plantProduction';
 
 // Все уникальные входные ресурсы из всех формул
 const deriveFormulaFrom = (formulas: any[]): any[] => {
@@ -575,7 +575,7 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
 
         // Единый расчёт: последовательный расход сырья + эффект «Технических училищ».
         const { from, to, change } = feedToPlant(formulas, requestArray, 'from', {
-          techSchoolsOpen: isTechSchoolsOpen(entry.plant?.plant_level),
+          techSchoolsOpen: !entry.isExtractive && techSchoolsOpenForPlant(entry.plant),
         });
 
         aggregatedResultTo = mergeResourceArrays(aggregatedResultTo, normalizeResourceArray(to));
@@ -766,13 +766,13 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     }
 
     const { to, change } = feedToPlant(formulas, request, 'from', {
-      techSchoolsOpen: isTechSchoolsOpen(selectedPlant?.plant_level),
+      techSchoolsOpen: !getIsExtractive(selectedPlant) && techSchoolsOpenForPlant(selectedPlant),
     });
 
     setResultTo(to);
     setResultFrom([]);
     setResultChange(change);
-  }, [formulaFrom, formulaTo, inputFrom, selectedPlant?.plant_level]);
+  }, [formulaFrom, formulaTo, getIsExtractive, inputFrom, selectedPlant]);
 
   const calculateTo = useCallback(() => {
     if (!selectedPlant?.plant_level) return;
@@ -803,13 +803,13 @@ export const useProcessingScreenLogic = (onClose: () => void) => {
     }
 
     const { from, change } = feedToPlant(formulas, request, 'to', {
-      techSchoolsOpen: isTechSchoolsOpen(selectedPlant?.plant_level),
+      techSchoolsOpen: !getIsExtractive(selectedPlant) && techSchoolsOpenForPlant(selectedPlant),
     });
 
     setResultFrom(from);
     setResultTo([]);
     setResultChange(change);
-  }, [formulaFrom, formulaTo, inputTo, selectedPlant?.plant_level]);
+  }, [formulaFrom, formulaTo, getIsExtractive, inputTo, selectedPlant]);
 
   const setInputFromValue = useCallback((identificator: string, value: string) => {
     setInputFrom((prev) => ({

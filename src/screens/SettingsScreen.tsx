@@ -12,6 +12,8 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { BrotherPrinterService } from '../services/BrotherPrinterService';
 import ScannerStatusBadge from '../components/ScannerStatusBadge';
+import { useAppUser } from '../context/UserContext';
+import { useUsers } from '../data/hooks/useUsers';
 
 // Navigation prop приходит автоматически от React Navigation
 const SettingsScreen = () => {
@@ -19,6 +21,12 @@ const SettingsScreen = () => {
   const [printerIp, setPrinterIp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown');
+
+  // «Кто я»: уведомления адресованы пользователю (как выбор мастера в вебе),
+  // поэтому планшет должен знать, за кого он работает.
+  const { user, isReady, setUser } = useAppUser();
+  const usersQuery = useUsers();
+  const users = usersQuery.data ?? [];
 
   useEffect(() => {
     loadPrinterSettings();
@@ -123,6 +131,39 @@ const SettingsScreen = () => {
       </View>
 
       <ScrollView style={styles.content}>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Кто я</Text>
+          <Text style={styles.sectionHint}>
+            {user
+              ? `Уведомления приходят: ${user.name}${user.job ? ` (${user.job})` : ''}`
+              : 'Мастер не выбран — уведомления приходить не будут'}
+          </Text>
+
+          {isReady && users.length === 0 ? (
+            <Text style={styles.sectionHint}>
+              {usersQuery.error ? 'Список пользователей недоступен: нет связи' : 'Загрузка пользователей…'}
+            </Text>
+          ) : null}
+
+          {users.map((item) => {
+            const isActive = user?.id === item.id;
+
+            return (
+              <TouchableOpacity
+                key={item.id}
+                style={[styles.userRow, isActive && styles.userRowActive]}
+                onPress={() => setUser({ id: item.id, name: item.name, job: item.job })}
+              >
+                <View style={styles.userRowContent}>
+                  <Text style={styles.userRowName}>{item.name}</Text>
+                  {item.job ? <Text style={styles.userRowJob}>{item.job}</Text> : null}
+                </View>
+                {isActive ? <Text style={styles.userRowCheck}>✓</Text> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Рабочие места</Text>
           
@@ -292,6 +333,42 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 15,
+  },
+  sectionHint: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 10,
+  },
+  userRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'white',
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  userRowActive: {
+    borderWidth: 2,
+    borderColor: '#1e88e5',
+  },
+  userRowContent: {
+    flex: 1,
+  },
+  userRowName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  userRowJob: {
+    fontSize: 13,
+    color: '#777',
+  },
+  userRowCheck: {
+    fontSize: 20,
+    color: '#1e88e5',
+    fontWeight: 'bold',
   },
   settingButton: {
     flexDirection: 'row',

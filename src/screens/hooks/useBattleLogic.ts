@@ -11,10 +11,12 @@
  *     авто-выбор самых слабых потерь с ручной правкой, анимация удара,
  *     отступление на 4–6 и новый раунд.
  *
- * На бэкенд уходят два действия, и оба — только после подтверждения мастером:
- * уничтожение разбитых армий (DELETE /armies/:id) и передача региона победителю
- * (PATCH /regions/:id/captured_by), когда взята столица государства. Захвата
- * отдельного города в API нет: город принадлежит региону.
+ * На бэкенд уходят действия, и все — только после подтверждения мастером:
+ * уничтожение разбитых армий (DELETE /armies/:id), уничтожение погибших в бою
+ * отрядов (DELETE /troops/:id), передача региона победителю
+ * (PATCH /regions/:id/captured_by), когда взята столица государства, и влияние
+ * Воеводе за победу (PATCH /armies/award_battle_victory). Захвата отдельного
+ * города в API нет: город принадлежит региону.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ApiService from '../../services/api';
@@ -68,6 +70,22 @@ export interface BattleTroop {
   source: 'backend' | 'added' | 'city';
   /** Порядок добавления: по нему разрешаются равные по силе потери. */
   order: number;
+  /**
+   * id отряда на бэкенде. Есть только у отрядов, пришедших с сервера: отряды,
+   * добавленные мастером в состав боя (`added`) и пехота города (`city`),
+   * на бэкенде не существуют — удалять нечего.
+   */
+  troopId?: number | null;
+}
+
+/** Погибший в бою отряд, который есть на бэкенде: удаляется по `troopId`. */
+export interface FallenTroop {
+  troopId: number;
+  kind: TroopKind;
+  name: string;
+  armyName: string;
+  armyUid: string;
+  armyId: number | null;
 }
 
 export interface BattleArmy {
@@ -135,6 +153,24 @@ export function useBattleLogic() {
   const [outcomeConfirmed, setOutcomeConfirmed] = useState(false);
   const [deletedArmyIds, setDeletedArmyIds] = useState<number[]>([]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  /**
+   * Отряды, погибшие в бою и существующие на бэкенде. Копятся по раундам:
+   * уничтожаются одним подтверждением мастера в итоге сражения.
+   */
+  const [fallenTroops, setFallenTroops] = useState<FallenTroop[]>([]);
+  const [deletedTroopIds, setDeletedTroopIds] = useState<number[]>([]);
+  const [troopDeleteError, setTroopDeleteError] = useState<string | null>(null);
+  const [troopsConfirmed, setTroopsConfirmed] = useState(false);
+  const [troopDeleteBusy, setTroopDeleteBusy] = useState(false);
+  /** Влияние Воеводе за победу: начисляется отдельным действием мастера. */
+  const [voevodaBusy, setVoevodaBusy] = useState(false);
+  const [voevodaError, setVoevodaError] = useState<string | null>(null);
+  const [voevodaAwarded, setVoevodaAwarded] = useState<Array<{
+    id: number;
+    name: string;
+    country_name?: string | null;
+    value?: number;
+  }> | null>(null);
   const [busy, setBusy] = useState(false);
   const [roundMessage, setRoundMessage] = useState<string | null>(null);
   const [annexationChoice, setAnnexationChoice] = useState<number | null>(null);
@@ -209,6 +245,28 @@ export function useBattleLogic() {
     pendingVictimsRef.current = null;
 
     const removed = new Set([...applied.attacker, ...applied.defender]);
+
+    // Погибшие отряды, существующие на бэкенде, копим до итога сражения:
+    // уничтожаются одним подтверждением мастера (DELETE /troops/:id).
+    const fallen: FallenTroop[] = [];
+    armiesRef.current.forEach(army => {
+      army.troops.forEach(troop => {
+        if (!removed.has(troop.uid)) return;
+        if (typeof troop.troopId !== 'number') return;
+        fallen.push({
+          troopId: troop.troopId,
+          kind: troop.kind,
+          name: troop.name,
+          armyName: army.name,
+          armyUid: army.uid,
+          armyId: army.armyId,
+        });
+      });
+    });
+    if (fallen.length > 0) {
+      setFallenTroops(prev => [...prev, ...fallen]);
+    }
+
     const next = armiesRef.current.map(army => ({
       ...army,
       troops: army.troops.filter(troop => !removed.has(troop.uid)),
@@ -425,7 +483,7 @@ export function useBattleLogic() {
                 ...item,
                 troops: [
                   ...item.troops,
-                  { uid, kind, name: TROOP_LABEL[kind], source: 'added', order },
+                  { uid, kind, name: TROOP_LABEL[kind], source: 'added', order, troopId: null },
                 ],
               }
             : item,
@@ -514,6 +572,14 @@ export function useBattleLogic() {
     setOutcomeConfirmed(false);
     setDeletedArmyIds([]);
     setDeleteError(null);
+    setFallenTroops([]);
+    setDeletedTroopIds([]);
+    setTroopDeleteError(null);
+    setTroopsConfirmed(false);
+    setTroopDeleteBusy(false);
+    setVoevodaBusy(false);
+    setVoevodaError(null);
+    setVoevodaAwarded(null);
     setRoundMessage(null);
     setAnnexationChoice(null);
     setAnnexationResult(null);
@@ -542,7 +608,14 @@ export function useBattleLogic() {
         ...army,
         troops: [
           ...army.troops,
-          { uid, kind: 'infantry' as TroopKind, name: 'Пехота (город)', source: 'city' as const, order },
+          {
+            uid,
+            kind: 'infantry' as TroopKind,
+            name: 'Пехота (город)',
+            source: 'city' as const,
+            order,
+            troopId: null,
+          },
         ],
       };
     });
@@ -571,6 +644,7 @@ export function useBattleLogic() {
               name: 'Пехота (город)',
               source: 'city',
               order: nextOrder(),
+              troopId: null,
             },
           ],
           bonus: 0,
@@ -944,6 +1018,38 @@ export function useBattleLogic() {
     setPhase('rolling');
   }, [phase]);
 
+  /**
+   * Закончить сражение в перерыве между раундами: мастер решает, кто уходит.
+   *
+   * Три сценария (заказчик):
+   *  1. бой в чистом поле — итог сражения с подтверждениями (уничтожение
+   *     погибших отрядов/разбитых армий, влияние Воеводе);
+   *  2. была осада и атакующие уходят — то же, что и в п. 1;
+   *  3. бой за город и защищающиеся отступают — тот же итог плюс блок передачи
+   *     и снятия владельца города (`capturedCity`).
+   *
+   * Раунд не переигрывается: сцена сбрасывается, бросок отступления не нужен —
+   * уход по решению мастера, а не по правилу 4–6.
+   */
+  const finishBattle = useCallback(
+    (side: BattleSide) => {
+      if (phase !== 'retreat') return;
+      runRef.current += 1;
+      pendingVictimsRef.current = null;
+      resetScene();
+      setRolls({});
+      setSpinning({});
+      setRetreatSpinning({});
+      setHits({ attacker: 0, defender: 0 });
+      setVictims({ attacker: [], defender: [] });
+      setRoundMessage(null);
+      setBattleArmies(prev => prev.map(army => ({ ...army, retreatRoll: null })));
+      setOutcome(side === 'attacker' ? 'attackers_retreated' : 'defenders_retreated');
+      setPhase('finished');
+    },
+    [phase, resetScene],
+  );
+
   // ─── Итог: подтверждение уничтожения армий ───────────────────────────────
 
   const armiesToDestroy = useMemo(() => {
@@ -979,12 +1085,57 @@ export function useBattleLogic() {
   }, [armiesToDestroy, busy, outcomeConfirmed]);
 
   /**
-   * Взятый город: что мастер может с ним сделать в конце боя. Появляется всегда,
-   * когда защищающиеся разбиты в городском бою, — владелец города и регион
-   * показываются независимо от того, столица это или нет.
+   * Погибшие отряды, которые надо удалить на бэкенде: исключаем отряды армий,
+   * которые удаляются целиком (вместе с армией уходят и её отряды) и уже
+   * удалённые в этом бою.
+   */
+  const troopsToDestroy = useMemo(() => {
+    const destroyedArmyUids = new Set(armiesToDestroy.map(army => army.uid));
+    return fallenTroops.filter(troop => !destroyedArmyUids.has(troop.armyUid));
+  }, [armiesToDestroy, fallenTroops]);
+
+  /**
+   * Уничтожение погибших отрядов на бэкенде — отдельное подтверждение мастера.
+   * Армия, удалённая целиком, уносит свои отряды сама (dependent: :destroy),
+   * поэтому её отряды в этот список не попадают.
+   */
+  const confirmTroopDestruction = useCallback(async () => {
+    if (troopDeleteBusy || troopsConfirmed) return;
+    setTroopDeleteBusy(true);
+    setTroopDeleteError(null);
+
+    const ids: number[] = [];
+    troopsToDestroy.forEach(troop => {
+      if (!deletedTroopIds.includes(troop.troopId) && !ids.includes(troop.troopId)) {
+        ids.push(troop.troopId);
+      }
+    });
+
+    const errors: string[] = [];
+    for (const id of ids) {
+      try {
+        await ApiService.deleteTroop(id);
+        setDeletedTroopIds(prev => [...prev, id]);
+      } catch (error) {
+        errors.push(getErrorMessage(error, `отряд #${id}`));
+      }
+    }
+    if (ids.length > 0) {
+      queryClient.invalidate([queryKeys.armies()]);
+    }
+    setTroopDeleteError(errors.length ? errors.join('; ') : null);
+    setTroopsConfirmed(true);
+    setTroopDeleteBusy(false);
+  }, [deletedTroopIds, troopDeleteBusy, troopsConfirmed, troopsToDestroy]);
+
+  /**
+   * Взятый город: что мастер может с ним сделать в конце боя. Появляется, когда
+   * защищающиеся разбиты ИЛИ сами оставили город (п. 3 «закончить сражение»), —
+   * владелец города показывается независимо от того, столица это или нет.
    */
   const capturedCity = useMemo(() => {
-    if (outcome !== 'defenders_destroyed' || placeKind !== 'city' || !selectedSettlement) return null;
+    if (outcome !== 'defenders_destroyed' && outcome !== 'defenders_retreated') return null;
+    if (placeKind !== 'city' || !selectedSettlement) return null;
 
     // Игроки, чьи армии нападали: их показываем первыми в выборе владельца.
     const attackerPlayerIds: number[] = [];
@@ -1017,6 +1168,9 @@ export function useBattleLogic() {
    * сам (экран показывает, сколько армий у государства осталось).
    */
   const annexation = useMemo(() => {
+    // Регион присоединяется только за взятие столицы силой; когда защищающиеся
+    // сами оставили город, мастер решает по владельцу (и регион — в веб-админке).
+    if (outcome !== 'defenders_destroyed') return null;
     if (!capturedCity || !capturedCity.isCapital) return null;
     if (defendingCountryId === null) return null;
     const regionId = capturedCity.regionId;
@@ -1060,6 +1214,7 @@ export function useBattleLogic() {
     capturedCity,
     countryName,
     defendingCountryId,
+    outcome,
     regionCountryId,
     regionsQuery.data,
   ]);
@@ -1160,6 +1315,92 @@ export function useBattleLogic() {
     (playerId: number) => changeCityOwner(playerId),
     [changeCityOwner],
   );
+
+  // ─── Влияние Воеводе за победу ───────────────────────────────────────────
+
+  /**
+   * Победившие армии, существующие на бэкенде: гарнизон города и отряды,
+   * добавленные мастером в состав боя, армиями на сервере не являются.
+   */
+  const winnerArmies = useMemo(() => {
+    if (!outcome) return [];
+    const winnerSide: BattleSide =
+      outcome === 'attackers_destroyed' || outcome === 'attackers_retreated'
+        ? 'defender'
+        : 'attacker';
+
+    return battleArmies
+      .filter(army => army.side === winnerSide && army.armyId !== null)
+      .map(army => ({
+        uid: army.uid,
+        armyId: army.armyId as number,
+        name: army.name,
+        ownerName: army.ownerName,
+      }));
+  }, [battleArmies, outcome]);
+
+  /**
+   * Разбитые армии проигравшей стороны, существующие на бэкенде.
+   *
+   * За каждую из них Воевода победителя получает +4, а Воевода проигравшего — −1.
+   * Гарнизон (`armyId === null`) и отошедшие без потерь армии (`retreated`) не
+   * считаются: бонус даётся только за реально разбитую армию.
+   */
+  const defeatedArmies = useMemo(() => {
+    if (!outcome) return [];
+    const loserSide: BattleSide =
+      outcome === 'attackers_destroyed' || outcome === 'attackers_retreated'
+        ? 'attacker'
+        : 'defender';
+
+    return battleArmies
+      .filter(
+        army =>
+          army.side === loserSide &&
+          army.armyId !== null &&
+          !army.retreated &&
+          army.troops.length === 0,
+      )
+      .map(army => ({
+        uid: army.uid,
+        armyId: army.armyId as number,
+        name: army.name,
+        ownerName: army.ownerName,
+      }));
+  }, [battleArmies, outcome]);
+
+  /**
+   * Влияние Воеводе за сражение. Бой на этом экране считается на клиенте, поэтому
+   * серверный `Army#attack` (веб-админка) не вызывается и без явного вызова
+   * Воевода оставался без бонуса. Сервер начисляет +4 за КАЖДУЮ разбитую армию
+   * противника совету Воеводы победителя и −1 за каждую разбитую армию совету
+   * Воеводы проигравшего; гарнизон армией не считается. Возвращает список
+   * начислений и штрафов — по нему видно, кому что ушло.
+   */
+  const awardVoevodaInfluence = useCallback(async () => {
+    if (voevodaBusy || voevodaAwarded) return;
+    const ids = winnerArmies.map(army => army.armyId);
+    if (ids.length === 0) {
+      setVoevodaAwarded([]);
+      setVoevodaError('Ни одной победившей армии нет на бэкенде — начислять некому.');
+      return;
+    }
+
+    setVoevodaBusy(true);
+    setVoevodaError(null);
+    try {
+      const result = await ApiService.awardBattleVictory(
+        ids,
+        defeatedArmies.map(army => army.armyId),
+      );
+      setVoevodaAwarded(result?.awarded ?? []);
+      queryClient.invalidate([queryKeys.players()]);
+    } catch (error) {
+      setVoevodaError(getErrorMessage(error, 'Влияние Воеводе'));
+    } finally {
+      setVoevodaBusy(false);
+    }
+  }, [defeatedArmies, voevodaAwarded, voevodaBusy, winnerArmies]);
 
   // ─── Значения для карточек ───────────────────────────────────────────────
 
@@ -1269,6 +1510,23 @@ export function useBattleLogic() {
     removeCityOwner,
     assignCityOwner,
     armiesToDestroy,
+    /** Погибшие отряды к уничтожению на бэкенде (DELETE /troops/:id). */
+    troopsToDestroy,
+    troopsConfirmed,
+    troopDeleteBusy,
+    troopDeleteError,
+    deletedTroopIds,
+    confirmTroopDestruction,
+    /** «Закончить сражение» в перерыве между раундами (кто уходит). */
+    finishBattle,
+    /** Влияние Воеводе за победу: армии-победители и результат начисления. */
+    winnerArmies,
+    /** Разбитые армии проигравшей стороны (за каждую +4 победителю, −1 проигравшему). */
+    defeatedArmies,
+    voevodaBusy,
+    voevodaError,
+    voevodaAwarded,
+    awardVoevodaInfluence,
     rollTroop,
     rollArmy,
     rollAll,

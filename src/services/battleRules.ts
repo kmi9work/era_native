@@ -168,12 +168,24 @@ export const autoCasualties = <T extends { kind: TroopKind; order: number }>(
 export const countHits = (rolls: Array<{ kind: TroopKind; value: number }>): number =>
   rolls.reduce((sum, item) => (isHit(item.kind, item.value) ? sum + 1 : sum), 0);
 
-/** Отряды армии с бэкенда → карточки боя (по одному на каждый отряд). */
+/**
+ * Отряды армии с бэкенда → карточки боя (по одному на каждый отряд).
+ * `troopId` — id отряда на бэкенде: по нему погибший в бою отряд удаляется
+ * (`DELETE /troops/:id`). У отрядов, добавленных мастером в состав этого боя,
+ * id нет — на бэкенде их не существует.
+ */
 export const battleTroopsFromArmy = (
   army: Army,
   startOrder: number,
   uidPrefix: string,
-): Array<{ uid: string; kind: TroopKind; name: string; source: 'backend'; order: number }> =>
+): Array<{
+  uid: string;
+  kind: TroopKind;
+  name: string;
+  source: 'backend';
+  order: number;
+  troopId: number | null;
+}> =>
   (army.troops || []).map((troop, index) => {
     const kind = troopKindFromTroop(troop);
     return {
@@ -182,6 +194,7 @@ export const battleTroopsFromArmy = (
       name: TROOP_LABEL[kind],
       source: 'backend' as const,
       order: startOrder + index,
+      troopId: typeof troop.id === 'number' ? troop.id : null,
     };
   });
 

@@ -1,6 +1,5 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import MastersNotice from './MastersNotice';
 import WorkForbiddenBanner from './WorkForbiddenBanner';
 import BuildCountriesNotice from './BuildCountriesNotice';
 import { useGuildWorkshop } from '../hooks/useGuildWorkshop';
@@ -31,7 +30,6 @@ export default function ManyTeamsOverlay({
 
   return (
     <View style={inline ? styles.inlineWrapper : styles.wrapper} pointerEvents="box-none">
-      <MastersNotice text={data?.notice} />
       {singleGuild ? <BuildCountriesNotice countries={data?.countries} loading={isLoading} /> : null}
       {guildIds.map((guildId) => (
         <WorkForbiddenBanner key={guildId} guildId={guildId} />
