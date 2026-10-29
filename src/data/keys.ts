@@ -29,8 +29,17 @@ export const queryKeys = {
    *  гильдии строить и работать в государстве места), а место без гильдии
    *  показывало бы чужой ответ из кэша. */
   availablePlaces: (guildId?: number | null): QueryKey => ['availablePlaces', guildId ?? 'none'],
-  /** Технологии государства (название, эффект, факт открытия): GET /technologies.json */
+  /** Технологии государства (название, эффект, факт открытия): GET /technologies.json.
+   *  Без параметра — статус ТЕКУЩЕГО государства (как отдаёт сервер по умолчанию). */
   technologies: (): QueryKey => ['technologies'],
+  /** Технологии КОНКРЕТНОГО государства: GET /technologies.json?country_id=
+   *  Нужен там, где решение зависит не от текущего государства, а от страны объекта
+   *  (например «Сельские школы» на землях предприятия при улучшении). */
+  technologiesForCountry: (countryId?: number | null): QueryKey => [
+    'technologies',
+    'country',
+    countryId ?? 'none',
+  ],
   /** Страны (отношения, эмбарго): GET /countries/foreign_countries.json */
   countries: (): QueryKey => ['countries'],
   /** Цены: GET /resources/show_prices.json */
@@ -47,6 +56,11 @@ export const queryKeys = {
   regions: (): QueryKey => ['regions'],
   /** Все игроки игры: GET /players.json — назначение владельца города */
   players: (): QueryKey => ['players'],
+  /** Эмбарго на гильдию в разрезе стран: GET /many_teams/guild_embargoes/market?guild_id=
+   *  Гильдия — часть ключа: эмбарго накладывается на гильдию, у разных гильдий
+   *  разные страны-эмбаргодержатели. В остальных играх ключ не запрашивается
+   *  (эмбарго там страновое, Country#params["embargo"]). */
+  marketEmbargo: (guildId?: number | null): QueryKey => ['marketEmbargo', guildId ?? 'none'],
   /** Пользователи игры (мастера): GET /users.json — выбор «кто я» в настройках */
   users: (): QueryKey => ['users'],
   /**

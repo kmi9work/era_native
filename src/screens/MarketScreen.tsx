@@ -23,7 +23,17 @@ const MarketScreen = () => {
 
   // Refetch-on-focus: при возврате на рынок данные обновляются сами (Д5),
   // опрос цен/стран при этом идёт только пока экран в фокусе (Д4).
-  useRefetchOnFocus([queryKeys.guilds(), queryKeys.countries(), queryKeys.prices()]);
+  // Эмбарго на гильдию (many_teams) — свой ключ на выбранную гильдию; в остальных
+  // играх такого ключа нет и в список фокуса он не попадает (иначе слой обновлял бы
+  // ключ без fetcher'а и шильдик показывал фантомное «нет связи»).
+  useRefetchOnFocus([
+    queryKeys.guilds(),
+    queryKeys.countries(),
+    queryKeys.prices(),
+    logic.isGameManyTeams && logic.selectedMarketGuild != null
+      ? queryKeys.marketEmbargo(logic.selectedMarketGuild)
+      : null,
+  ]);
 
   const {
     marketGuilds,
@@ -222,7 +232,8 @@ const MarketScreen = () => {
                   ]}
                   onPress={() => {
                     setSelectedCountry(country.id);
-                    updateResourcesArrays(country.id);
+                    // Новая страна — другой набор товаров: поля заполняются заново.
+                    updateResourcesArrays(country.id, { resetCounts: true });
                   }}
                 >
                   <Image
@@ -245,7 +256,12 @@ const MarketScreen = () => {
                       });
                     }}
                   />
-                  <Text style={styles.countryButtonText}>
+                  <Text
+                    style={[
+                      styles.countryButtonText,
+                      hasEmbargo(country) && styles.countryButtonTextEmbargo,
+                    ]}
+                  >
                     {country.short_name || country.name}
                   </Text>
                   {hasEmbargo(country) && (
@@ -254,6 +270,13 @@ const MarketScreen = () => {
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            {countries.some((country) => hasEmbargo(country)) && (
+              <Text style={styles.embargoHint}>
+                {logic.isGameManyTeams
+                  ? 'Красным отмечены страны, наложившие эмбарго на выбранную гильдию: караван туда не пройдёт без карточки «Контрабанда».'
+                  : 'Красным отмечены страны, введшие эмбарго против Руси: для операций с ними нужна карточка «Контрабанда».'}
+              </Text>
+            )}
           </View>
         )}
 
@@ -598,11 +621,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
+  /** Страна наложила эмбарго — название тоже красное (в вебе кнопка получает цвет error). */
+  countryButtonTextEmbargo: {
+    color: '#c62828',
+  },
   embargoLabel: {
     fontSize: 10,
     color: '#f44336',
     fontWeight: 'bold',
     marginLeft: 4,
+  },
+  embargoHint: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#c62828',
   },
   marketFormSection: {
     marginBottom: 20,

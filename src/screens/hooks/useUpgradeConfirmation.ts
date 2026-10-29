@@ -3,11 +3,13 @@ import { Alert } from 'react-native';
 import { getErrorMessage } from '../../data/apiErrors';
 import { loadPlant, usePlant } from '../../data/hooks/usePlant';
 import { ensurePlantLevels, getCachedPlantLevelsForType, usePlantLevels } from '../../data/hooks/usePlantLevels';
+import { useCountryTechnologies } from '../../data/hooks/useTechnologies';
 import { queryKeys } from '../../data/keys';
 import { queryClient } from '../../data/queryClient';
 import { useMutation } from '../../data/useMutation';
 import { BrotherPrinterService } from '../../services/BrotherPrinterService';
 import ApiService from '../../services/api';
+import { isRuralSchoolsOpen, ruralSchoolsName } from '../../services/plantTechnology';
 import { usePlantProcessingLogic } from './usePlantProcessingLogic';
 
 /**
@@ -15,6 +17,12 @@ import { usePlantProcessingLogic } from './usePlantProcessingLogic';
  * Предприятие — ключ ['plant', id] (TTL 0, всегда свежее, фоновая перерисовка не мешает вводу),
  * стоимость уровня — из кэша ['plantLevels'], после upgrade/downgrade инвалидируются только
  * затронутые ключи (Д9/§ 5 правило 4).
+ *
+ * Правило «Сельские школы»: улучшать предприятия можно только в государстве, где технология
+ * открыта. Проверяется государство ЗЕМЕЛЬ предприятия (`plant_place.region_country_id`), а не
+ * текущее: технологии на сервере считаются по государству запроса, поэтому статус берётся
+ * отдельным ключом ['technologies', 'country', id] (`/technologies.json?country_id=`).
+ * Запрет — предупреждение, а не блокировка запроса: мастер улучшает предприятие в обход.
  */
 export interface UpgradeConfirmationState {
   plantInfo: any | null;
@@ -34,6 +42,17 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
   const [plantId, setPlantId] = useState<number | null>(null);
   const plantQuery = usePlant(plantId);
   usePlantLevels();
+
+  // Государство ЗЕМЕЛЬ предприятия: от него зависит, открыты ли «Сельские школы».
+  // В ответе `GET /plants/:id.json` это `plant_place.region_country_id`; пока предприятие
+  // не загружено — null, и статус технологии не запрашивается (`enabled` в хуке).
+  const plantCountryId: number | null =
+    (state.plantInfo?.plant_place?.region_country_id as number | undefined) ?? null;
+  const plantCountryName: string | null =
+    (state.plantInfo?.plant_place?.region_country_name as string | undefined) ?? null;
+  const countryTechnologies = useCountryTechnologies(plantCountryId);
+  // null — статус ещё не пришёл; в этом случае ничего не запрещаем.
+  const ruralSchoolsOpen = isRuralSchoolsOpen(countryTechnologies.data);
 
   const processing = usePlantProcessingLogic();
   const plantIdRef = useRef<number | null>(null);
@@ -210,5 +229,12 @@ export function useUpgradeConfirmation(onComplete?: () => void) {
     // Свежесть карточки предприятия и справочника уровней (для индикации мастеру)
     plantUpdatedAt: plantQuery.updatedAt,
     isOffline: plantQuery.isOffline,
+    // Правило «Сельские школы»: государство земель предприятия и статус технологии.
+    // `isUpgradeForbidden` — технология ЗАКРЫТА (не «неизвестно»): экран показывает
+    // «Запрещено» и предупреждение, но улучшить всё равно даёт.
+    plantCountryId,
+    plantCountryName,
+    isUpgradeForbidden: ruralSchoolsOpen === false,
+    ruralSchoolsTechnologyName: ruralSchoolsName(countryTechnologies.data),
   };
 }

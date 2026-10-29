@@ -20,6 +20,38 @@ export type PlaceLike =
   | null
   | undefined;
 
+/**
+ * «Сельские школы» (Technology::RURAL_SCHOOLS на бэкенде) — единственная технология,
+ * которая разрешает УЛУЧШЕНИЕ предприятий (dizdoc: «Купцы могут улучшать предприятия»).
+ * Сервер улучшение не блокирует, поэтому правило проверяет клиент — предупреждением,
+ * которое мастер вправе обойти.
+ */
+export const RURAL_SCHOOLS_ID = 1;
+
+/**
+ * Статус «Сельских школ» по ответу `GET /technologies.json?country_id=`
+ * (у технологии есть `is_open`: 1 — открыта, 0 — закрыта).
+ * `null` — данных ещё нет (список не пришёл или технологии в нём нет):
+ * в этом случае запрещать улучшение нельзя, иначе кнопка «Запрещено» появится
+ * на пустом месте при медленной связи.
+ */
+export function isRuralSchoolsOpen(technologies?: any[] | null): boolean | null {
+  const technology = (technologies || []).find((item: any) => item?.id === RURAL_SCHOOLS_ID);
+  if (!technology) {
+    return null;
+  }
+  const value = technology.is_open ?? technology.isOpen;
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return Number(value) === 1;
+}
+
+/** Название технологии из ответа сервера (формулировка игры), иначе — из правил. */
+export function ruralSchoolsName(technologies?: any[] | null): string {
+  return (technologies || []).find((item: any) => item?.id === RURAL_SCHOOLS_ID)?.name || 'Сельские школы';
+}
+
 /** Требования технологии, действующие для конкретной земли. */
 export function requirementsForPlace(
   place: PlaceLike,

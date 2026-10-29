@@ -202,6 +202,19 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Технологии КОНКРЕТНОГО государства: `GET /technologies.json?country_id=`.
+   * Статус открытия (`is_open`) сервер считает по государству запроса, поэтому для
+   * решений «открыта ли технология в стране предприятия» текущего государства мало.
+   */
+  async getCountryTechnologies(countryId: number, signal?: AbortSignal): Promise<any[]> {
+    const response = await this.api.get('/technologies.json', {
+      params: { country_id: countryId },
+      signal,
+    });
+    return response.data;
+  }
+
   // Печать штрихкода для предприятия
   async printBarcode(plantId: number): Promise<{ success: boolean; error?: string }> {
     const response = await this.api.post(

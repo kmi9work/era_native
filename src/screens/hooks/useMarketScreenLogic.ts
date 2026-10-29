@@ -12,6 +12,7 @@ import ApiService from '../../services/api';
 import { Country, Guild, Resource } from '../../types';
 import { gameConfig } from '../../config/game';
 import { CONFIG } from '../../config';
+import { useMarketEmbargo } from '../../plugins/game-plugins/many_teams/hooks/useMarketEmbargo';
 import { useMarketWatch } from './useMarketWatch';
 
 interface MarketResources {
@@ -32,6 +33,40 @@ interface ResToPlayer {
 }
 
 const EMPTY_MARKET_RESOURCES: MarketResources = { off_market: [], to_market: [] };
+
+/**
+ * Строки формы рынка: набор позиций приходит С СЕРВЕРА и обновляется опросом
+ * (цены — раз в 60 с, страны — раз в 30 с), поэтому введённые мастером числа
+ * переносятся по идентификатору ресурса и не сбрасываются фоном.
+ *
+ * `resetCounts` — только для смены страны/гильдии: там ввод относится к прежнему
+ * набору товаров, и его нужно очистить один раз, а не на каждом обновлении.
+ */
+export function mergeMarketRows(
+  previous: ResourceCount[],
+  next: ResourceCount[],
+  resetCounts = false,
+): ResourceCount[] {
+  const counts = new Map<string, number | null>();
+  if (!resetCounts) {
+    previous.forEach((row) => counts.set(row.identificator, row.count));
+  }
+
+  return next.map((row) => ({
+    ...row,
+    count: counts.has(row.identificator) ? counts.get(row.identificator) ?? null : null,
+  }));
+}
+
+/** Одинаковые ли строки формы (позиции и числа) — чтобы фон не перерисовывал поля ввода. */
+export function sameMarketRows(a: ResourceCount[], b: ResourceCount[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((row, index) => {
+    const other = b[index];
+    return row.identificator === other.identificator && row.count === other.count;
+  });
+}
 
 export interface UseMarketScreenLogicReturn {
   // State
@@ -63,6 +98,8 @@ export interface UseMarketScreenLogicReturn {
   isOffline: boolean;
   updatedAt: number | undefined;
   isGameArtel: boolean;
+  /** many_teams: эмбарго накладывается на ГИЛЬДИЮ (карта «страна → эмбарго» из движка). */
+  isGameManyTeams: boolean;
   isEmbargoActiveForSelected: boolean;
 
   // Handlers
@@ -79,7 +116,12 @@ export interface UseMarketScreenLogicReturn {
   setSelectedCountry: (value: number | null) => void;
   setResourcesPlSells: (updater: ResourceCount[] | ((prev: ResourceCount[]) => ResourceCount[])) => void;
   setResourcesPlBuys: (updater: ResourceCount[] | ((prev: ResourceCount[]) => ResourceCount[])) => void;
-  updateResourcesArrays: (countryId: number | null) => void;
+  /**
+   * Перестроить строки формы под страну. По умолчанию введённые числа СОХРАНЯЮТСЯ
+   * (фоновое обновление цен не должно стирать ввод); `resetCounts` — при смене
+   * страны/гильдии.
+   */
+  updateResourcesArrays: (countryId: number | null, options?: { resetCounts?: boolean }) => void;
   setLoading: (value: boolean) => void;
 
   // UI helpers
@@ -106,6 +148,13 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
   const marketGuilds = useMemo(() => (guildsQuery.data as Guild[]) ?? [], [guildsQuery.data]);
   const countries = useMemo(() => (countriesQuery.data as Country[]) ?? [], [countriesQuery.data]);
   const marketResources: MarketResources = pricesQuery.data?.prices ?? EMPTY_MARKET_RESOURCES;
+  // Данные цен — в ref: функция перестроения строк остаётся стабильной, иначе
+  // каждое фоновое обновление цен перезапускало бы эффекты формы.
+  const marketResourcesRef = useRef<MarketResources>(marketResources);
+  marketResourcesRef.current = marketResources;
+  // Для какой страны построены строки формы (undefined — ещё ни для какой):
+  // по нему отличаем смену страны (ввод сбрасывается) от обновления цен (сохраняется).
+  const resourcesCountryRef = useRef<number | null | undefined>(undefined);
 
   const guildIds = useMemo(() => marketGuilds.map((guild) => guild.id), [marketGuilds]);
   const robbery = useRobberyProbabilities(guildIds);
@@ -127,6 +176,11 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
   // Д6: режим игры определяется конфигом, а не длиной списка стран:
   // пустой или неудачный ответ по странам больше не переключает рынок в режим «без страны».
   const isGameArtel = gameConfig.isActive('artel');
+  // many_teams: эмбарго накладывается на ГИЛЬДИЮ, поэтому карту «страна → эмбарго»
+  // отдаёт движок по выбранной гильдии, а не страны из /countries/foreign_countries.
+  const isGameManyTeams = gameConfig.isActive('many-teams') || gameConfig.isActive('many_teams');
+  const guildEmbargo = useMarketEmbargo(isGameManyTeams ? selectedMarketGuild : null);
+  const embargoedCountries = guildEmbargo.embargoed;
 
   const watch = useMarketWatch(countries, pricesQuery.data?.prices, { formOpen: showMarketForm });
   const newRelations = watch.newRelations;
@@ -139,9 +193,10 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
   );
 
   const isEmbargoActiveForSelected = useMemo(() => {
-    if (isGameArtel) return false;
+    if (isGameArtel || !selectedCountryObj) return false;
+    if (isGameManyTeams) return Boolean(embargoedCountries[selectedCountryObj.id]);
     return (selectedCountryObj?.params?.embargo || 0) > 0;
-  }, [isGameArtel, selectedCountryObj]);
+  }, [isGameArtel, isGameManyTeams, embargoedCountries, selectedCountryObj]);
 
   // CaravanService — единственный потребитель цен и стран, и синхронизирует его теперь
   // только этот хук (раньше setCountries/setResources вызывались вручную в двух местах).
@@ -180,50 +235,76 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     setSelectedCountry(countries[0].id);
   }, [countries, selectedCountry, isGameArtel]);
 
-  // Обновление массивов ресурсов при изменении страны (или при режиме «рынок без страны»)
-  const updateResourcesArrays = useCallback((countryId: number | null) => {
-    // При смене страны эмбарго/контрабанда подтверждается заново
-    setContrabandConfirmed(false);
-    const matchCountry = (res: Resource) =>
-      countryId == null
-        ? (res.country_id == null && res.country?.id == null)
-        : (res.country_id === countryId || res.country?.id === countryId);
+  /**
+   * Строки формы под выбранную страну. Функция стабильна (зависимостей нет):
+   * данные цен читаются из ref, иначе каждая удачная загрузка цен меняла бы её
+   * идентичность, эффекты перезапускались бы и стирали ввод мастера.
+   */
+  const updateResourcesArrays = useCallback(
+    (countryId: number | null, options: { resetCounts?: boolean } = {}) => {
+      const { resetCounts = false } = options;
+      const { to_market, off_market } = marketResourcesRef.current;
+      const matchCountry = (res: Resource) =>
+        countryId == null
+          ? (res.country_id == null && res.country?.id == null)
+          : (res.country_id === countryId || res.country?.id === countryId);
 
-    const filteredToMarket = marketResources.to_market.filter(matchCountry);
-    const sellsArray = filteredToMarket.map(item => ({
-      identificator: item.identificator,
-      count: null,
-      name: item.name,
-    }));
-
-    // Добавляем золото в resourcesPlSells (как в era_front)
-    sellsArray.push({
-      identificator: 'gold',
-      count: null,
-      name: 'Золото',
-    });
-
-    setResourcesPlSells(sellsArray);
-
-    const filteredOffMarket = marketResources.off_market.filter(matchCountry);
-    setResourcesPlBuys(
-      filteredOffMarket.map(item => ({
+      const sells: ResourceCount[] = to_market.filter(matchCountry).map(item => ({
         identificator: item.identificator,
         count: null,
         name: item.name,
-      })),
-    );
-  }, [marketResources.to_market, marketResources.off_market]);
+      }));
 
+      // Добавляем золото в resourcesPlSells (как в era_front)
+      sells.push({
+        identificator: 'gold',
+        count: null,
+        name: 'Золото',
+      });
+
+      const buys: ResourceCount[] = off_market.filter(matchCountry).map(item => ({
+        identificator: item.identificator,
+        count: null,
+        name: item.name,
+      }));
+
+      setResourcesPlSells(prev => {
+        const next = mergeMarketRows(prev, sells, resetCounts);
+        return sameMarketRows(prev, next) ? prev : next;
+      });
+      setResourcesPlBuys(prev => {
+        const next = mergeMarketRows(prev, buys, resetCounts);
+        return sameMarketRows(prev, next) ? prev : next;
+      });
+
+      resourcesCountryRef.current = countryId;
+    },
+    [],
+  );
+
+  // Смена страны (или режима «рынок без страны»): другой набор товаров — поля
+  // строятся заново, ввод очищается ОДИН раз; контрабанда подтверждается заново.
   useEffect(() => {
-    if (showMarketForm) {
-      if (isGameArtel) {
-        updateResourcesArrays(null);
-      } else if (selectedCountry != null) {
-        updateResourcesArrays(selectedCountry);
-      }
-    }
+    if (!showMarketForm) return;
+    const countryId = isGameArtel ? null : selectedCountry;
+    if (!isGameArtel && countryId == null) return;
+    if (resourcesCountryRef.current === countryId) return;
+
+    updateResourcesArrays(countryId, { resetCounts: true });
+    setContrabandConfirmed(false);
   }, [selectedCountry, showMarketForm, isGameArtel, updateResourcesArrays]);
+
+  // Фоновое обновление цен/стран: набор позиций мог измениться, но введённые
+  // числа переносятся по идентификатору ресурса (жалоба «поля сбрасываются при
+  // регулярном обновлении»). Contraband-подтверждение здесь НЕ снимается.
+  useEffect(() => {
+    if (!showMarketForm) return;
+    const countryId = isGameArtel ? null : selectedCountry;
+    if (!isGameArtel && countryId == null) return;
+    if (resourcesCountryRef.current !== countryId) return;
+
+    updateResourcesArrays(countryId);
+  }, [marketResources, showMarketForm, isGameArtel, selectedCountry, updateResourcesArrays]);
 
   // Вспомогательные функции для UI
   const getRobberyProbability = useCallback((guildId: number): string => {
@@ -232,9 +313,19 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     return `${(prob.probability * 100).toFixed(1)}%`;
   }, [robbery.probabilities]);
 
-  const hasEmbargo = useCallback((country: Country): boolean => {
-    return (country.params?.embargo || 0) > 0;
-  }, []);
+  /**
+   * Единая проверка эмбарго для экрана «Рынок»:
+   *  * many_teams — эмбарго наложено на ГИЛЬДИЮ, карта приходит из движка;
+   *  * остальные игры — страновой флаг `Country#params["embargo"]` (как раньше).
+   */
+  const hasEmbargo = useCallback(
+    (country: Country): boolean => {
+      if (!country) return false;
+      if (isGameManyTeams) return Boolean(embargoedCountries[country.id]);
+      return (country.params?.embargo || 0) > 0;
+    },
+    [embargoedCountries, isGameManyTeams],
+  );
 
   const getImagesBaseUrl = useCallback((): string => {
     const base = (CONFIG.BACKEND_URL || ApiService.getBaseUrl()).replace(/\/+$/, '');
@@ -299,10 +390,11 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     setShowMarketForm(true);
     setContrabandConfirmed(false);
 
-    if (isGameArtel) {
-      updateResourcesArrays(null);
-    } else if (selectedCountry != null) {
-      updateResourcesArrays(selectedCountry);
+    const countryId = isGameArtel ? null : selectedCountry;
+    if (isGameArtel || countryId != null) {
+      // Новая гильдия — новый расчёт: поля заполняются заново (ввод прежней формы
+      // к этой гильдии не относится).
+      updateResourcesArrays(countryId, { resetCounts: true });
     }
   }, [isGameArtel, selectedCountry, updateResourcesArrays]);
 
@@ -337,11 +429,19 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
       setTotalSaleIncome(result.total_sale_income);
 
       const country = effectiveCountryId != null ? countries.find(c => c.id === effectiveCountryId) : null;
-      const hasEmbargoNow = !!(country?.params?.embargo && country.params.embargo > 0);
+      const hasEmbargoNow = country ? hasEmbargo(country) : false;
       if (hasEmbargoNow && !contrabandConfirmed) {
+        // В many_teams эмбарго наложено на ГИЛЬДИЮ, в остальных играх — страновой флаг:
+        // формулировка та же, что в веб-админке (Exchange.vue и плагин many_teams).
+        const guildName =
+          marketGuilds.find(guild => guild.id === selectedMarketGuild)?.name || 'этой гильдии';
         Alert.alert(
-          'Эта страна ввела эмбарго против Руси!',
-          'Для совершения операций с этой страной нужна Контрабанда. Есть карточка контрабанды?',
+          isGameManyTeams
+            ? 'Эта страна наложила эмбарго на гильдию!'
+            : 'Эта страна ввела эмбарго против Руси!',
+          isGameManyTeams
+            ? `Караван «${guildName}» в эту страну не пройдёт без карточки «Контрабанда». Есть карточка контрабанды?`
+            : 'Для совершения операций с этой страной нужна Контрабанда. Есть карточка контрабанды?',
           [
             {
               text: 'Есть карточка контрабанды!',
@@ -370,7 +470,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     } finally {
       setLoading(false);
     }
-  }, [isGameArtel, selectedCountry, selectedMarketGuild, resourcesPlSells, resourcesPlBuys, countries, contrabandConfirmed]);
+  }, [isGameArtel, isGameManyTeams, selectedCountry, selectedMarketGuild, resourcesPlSells, resourcesPlBuys, countries, contrabandConfirmed, hasEmbargo, marketGuilds]);
 
   const handleShowConfirmDialog = useCallback(() => {
     if (isEmbargoActiveForSelected && !contrabandConfirmed) {
@@ -529,6 +629,7 @@ export const useMarketScreenLogic = (): UseMarketScreenLogicReturn => {
     isOffline: countriesQuery.isOffline || pricesQuery.isOffline || guildsQuery.isOffline,
     updatedAt: countriesQuery.updatedAt,
     isGameArtel,
+    isGameManyTeams,
     isEmbargoActiveForSelected,
 
     // Handlers

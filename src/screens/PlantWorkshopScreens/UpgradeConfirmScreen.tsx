@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
+  Alert,
 } from 'react-native';
 import { useNavigation, useRoute, NavigationProp, RouteProp } from '@react-navigation/native';
 import PlantCostBlock from '../../screens/components/PlantCostBlock';
@@ -37,8 +38,18 @@ export default function UpgradeConfirmScreen() {
     initialPlantData?: any;
   };
 
-  const { state, processing, loadPlantForUpgrade, performUpgrade, performDowngrade, reprintBarcode } =
-    useUpgradeConfirmation();
+  const {
+    state,
+    processing,
+    loadPlantForUpgrade,
+    performUpgrade,
+    performDowngrade,
+    reprintBarcode,
+    plantCountryId,
+    plantCountryName,
+    isUpgradeForbidden,
+    ruralSchoolsTechnologyName,
+  } = useUpgradeConfirmation();
 
   const loadedPlantIdRef = useRef<number | null>(null);
 
@@ -50,12 +61,14 @@ export default function UpgradeConfirmScreen() {
   }, [plantId, loadPlantForUpgrade]);
 
   // Возврат на экран улучшения (после работы с цехом, скана) перечитывает предприятие и справочники.
+  // Технологии — государства ЗЕМЕЛЬ предприятия (правило «Сельские школы»).
   useRefetchOnFocus([
     plantId != null ? queryKeys.plant(plantId) : null,
     queryKeys.plantLevels(),
     queryKeys.resources(),
     // Технологии — для плашки «Технические училища открыты» в блоке переработки.
     queryKeys.technologies(),
+    plantCountryId != null ? queryKeys.technologiesForCountry(plantCountryId) : null,
   ]);
 
   const hasUpgradeCost =
@@ -68,6 +81,35 @@ export default function UpgradeConfirmScreen() {
       navigation.goBack();
       navigation.goBack();
     }
+  };
+
+  /**
+   * «Сельские школы» не открыты в государстве земель предприятия: улучшение
+   * запрещено правилами, но решение за мастером — поэтому предупреждение с
+   * третьей кнопкой «Всё равно улучшить», а не заблокированная кнопка.
+   */
+  const handleUpgradePress = () => {
+    if (!isUpgradeForbidden) {
+      void handleUpgrade();
+      return;
+    }
+
+    const where = plantCountryName ? ` в государстве «${plantCountryName}»` : '';
+    Alert.alert(
+      'Улучшение запрещено',
+      `Улучшение предприятия запрещено:${where} не открыта технология «${ruralSchoolsTechnologyName}».\n\n` +
+        'Мастер может улучшить предприятие в обход правила.',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Всё равно улучшить',
+          style: 'destructive',
+          onPress: () => {
+            void handleUpgrade();
+          },
+        },
+      ],
+    );
   };
 
   const handleReprint = async () => {
@@ -131,13 +173,24 @@ export default function UpgradeConfirmScreen() {
       <View style={styles.actionsContainer}>
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.primaryButton, styles.halfButton, !hasUpgradeCost && styles.primaryButtonDisabled]}
+            style={[
+              styles.primaryButton,
+              styles.halfButton,
+              !hasUpgradeCost && styles.primaryButtonDisabled,
+              // «Сельские школы» закрыты — кнопка предупреждает, но нажимается.
+              hasUpgradeCost && isUpgradeForbidden && styles.primaryButtonForbidden,
+            ]}
             activeOpacity={0.7}
-            onPress={handleUpgrade}
+            onPress={handleUpgradePress}
             disabled={!hasUpgradeCost}
           >
-            <Text style={styles.primaryButtonText}>
-              {isMaxLevel ? 'Макс.' : 'Улучшить'}
+            <Text
+              style={[
+                styles.primaryButtonText,
+                hasUpgradeCost && isUpgradeForbidden && styles.primaryButtonForbiddenText,
+              ]}
+            >
+              {isMaxLevel ? 'Макс.' : isUpgradeForbidden ? 'Запрещено' : 'Улучшить'}
             </Text>
           </TouchableOpacity>
 
@@ -227,6 +280,18 @@ const styles = StyleSheet.create({
   },
   primaryButtonDisabled: {
     backgroundColor: '#bdbdbd',
+  },
+  /**
+   * «Запрещено» (не открыта технология «Сельские школы»): светлый красный фон и
+   * красная надпись. Кнопка остаётся нажимаемой — мастер может обойти правило.
+   */
+  primaryButtonForbidden: {
+    backgroundColor: '#ffebee',
+    borderWidth: 2,
+    borderColor: '#c62828',
+  },
+  primaryButtonForbiddenText: {
+    color: '#c62828',
   },
   downgradeButton: {
     backgroundColor: '#e65100',
