@@ -198,6 +198,12 @@ export function useBattleLogic() {
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const uidRef = useRef(0);
   const orderRef = useRef(0);
+  /**
+   * Итог сражения уже отправлен на бэкенд. Один бой = одно уведомление мастерам:
+   * без флага эффект отправки сработал бы на каждом рендере после итога (потери,
+   * уничтожение армий, передача региона — всё это меняет зависимости эффекта).
+   */
+  const battleReportedRef = useRef(false);
   const runRef = useRef(0);
   const rollsRef = useRef<Record<string, number>>({});
   const spinningRef = useRef<Record<string, boolean>>({});
@@ -560,6 +566,7 @@ export function useBattleLogic() {
   const resetBattleState = useCallback(() => {
     runRef.current += 1;
     pendingVictimsRef.current = null;
+    battleReportedRef.current = false;
     resetScene();
     setRolls({});
     setSpinning({});
@@ -1315,6 +1322,57 @@ export function useBattleLogic() {
     (playerId: number) => changeCityOwner(playerId),
     [changeCityOwner],
   );
+
+  // ─── Итог сражения мастерам (уведомление) ────────────────────────────────
+
+  /**
+   * Итог сражения уходит на бэкенд, как только результат определился: бой
+   * считается на клиенте, поэтому без этого запроса о нём знает только планшет.
+   * Сервер рассылает полноэкранное окно мастерам сражений и политики (в том
+   * числе мастеру политики в вебе — era_front).
+   *
+   * Отправка одноразовая (`battleReportedRef`) и НЕ блокирует итог: если связи
+   * нет, бой всё равно разыгран, а мастера увидят его из прочих изменений.
+   */
+  useEffect(() => {
+    if (!outcome || battleReportedRef.current) return;
+    battleReportedRef.current = true;
+
+    const winnerSide: 'attacker' | 'defender' =
+      outcome === 'attackers_destroyed' || outcome === 'attackers_retreated'
+        ? 'defender'
+        : 'attacker';
+    const label = (army: BattleArmy) => `${army.name} (${army.ownerName})`;
+    // Государство победителя — акцент окна в вебе и на планшете. В городском бою
+    // это государство города, в поле — государство армий выигравшей стороны.
+    const winnerCountryId =
+      winnerSide === 'attacker'
+        ? attackers.find(army => army.countryId !== null)?.countryId ?? defendingCountryId
+        : defenders.find(army => army.countryId !== null)?.countryId ?? defendingCountryId;
+
+    ApiService.reportBattle({
+      attackers: attackers.map(army => ({ label: label(army) })),
+      defenders: defenders.map(army => ({ label: label(army) })),
+      winner_side: winnerSide,
+      outcome,
+      place: placeKind === 'city' ? selectedSettlement?.name ?? null : 'В поле',
+      round,
+      fallen_troops: fallenTroops.length,
+      winner_country_id: winnerCountryId,
+    }).catch(() => {
+      // Нет связи — окно мастерам не появится, но бой уже посчитан и записан
+      // действиями мастера (уничтожение армий, передача региона).
+    });
+  }, [
+    attackers,
+    defendingCountryId,
+    defenders,
+    fallenTroops.length,
+    outcome,
+    placeKind,
+    round,
+    selectedSettlement,
+  ]);
 
   // ─── Влияние Воеводе за победу ───────────────────────────────────────────
 

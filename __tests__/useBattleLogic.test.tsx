@@ -29,6 +29,7 @@ jest.mock('../src/services/api', () => ({
     deleteArmy: jest.fn(() => Promise.resolve()),
     deleteTroop: jest.fn(() => Promise.resolve()),
     awardBattleVictory: jest.fn(() => Promise.resolve({ success: true, awarded: [] })),
+    reportBattle: jest.fn(() => Promise.resolve()),
     captureRegion: jest.fn(() => Promise.resolve()),
     setSettlementOwner: jest.fn(() => Promise.resolve()),
     getPlayers: jest.fn(),
@@ -225,6 +226,7 @@ describe('useBattleLogic', () => {
     (ApiService.deleteArmy as jest.Mock).mockClear();
     (ApiService.deleteTroop as jest.Mock).mockClear();
     (ApiService.awardBattleVictory as jest.Mock).mockClear();
+    (ApiService.reportBattle as jest.Mock).mockClear();
     (ApiService.captureRegion as jest.Mock).mockClear();
     (ApiService.setSettlementOwner as jest.Mock).mockClear();
   });
@@ -964,6 +966,39 @@ describe('useBattleLogic', () => {
     expect(hook.current.capturedCity?.settlementId).toBe(10);
     // Регион при уходе защищающихся не присоединяется — это делает веб-админка.
     expect(hook.current.annexation).toBeNull();
+
+    hook.unmount();
+  });
+
+  it('итог сражения уходит мастерам одним запросом: POST /battles/report', async () => {
+    const hook = renderHook(() => useBattleLogic());
+    setupFieldBattle(hook);
+
+    // Попаданий нет — начинается отступление, мастер заканчивает бой уходом атакующих.
+    act(() => hook.current.setRng(() => 0));
+    act(() => hook.current.rollAll());
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+    act(() => hook.current.finishBattle('attacker'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ApiService.reportBattle).toHaveBeenCalledTimes(1);
+    const payload = (ApiService.reportBattle as jest.Mock).mock.calls[0][0];
+    // Ушли атакующие — победа защищающихся.
+    expect(payload.winner_side).toBe('defender');
+    expect(payload.outcome).toBe('attackers_retreated');
+    expect(payload.attackers).toEqual([{ label: 'Нападающие (Русь)' }]);
+    expect(payload.place).toBe('В поле');
+
+    // Повторное действие мастера не шлёт второй запрос: один бой = одно окно.
+    act(() => hook.current.finishBattle('attacker'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(ApiService.reportBattle).toHaveBeenCalledTimes(1);
 
     hook.unmount();
   });

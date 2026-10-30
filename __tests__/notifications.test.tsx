@@ -6,7 +6,7 @@
  * бэкенд с user_id, и без выбранного мастера запрос вообще не начинается.
  */
 import React from 'react';
-import { Text, TouchableOpacity } from 'react-native';
+import { Image, Text, TouchableOpacity } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ApiService from '../src/services/api';
@@ -92,6 +92,77 @@ describe('уведомления мастера', () => {
     expect(button).toBeDefined();
     act(() => button?.props.onPress());
     expect(onAcknowledge).toHaveBeenCalledTimes(1);
+
+    act(() => tree.unmount());
+  });
+
+  /**
+   * Присоединение земли: акцент на государстве (герб + название) и подсказка,
+   * какие добывающие предприятия теперь доступны.
+   */
+  it('выделяет государство гербом и названием и перечисляет добывающие предприятия', async () => {
+    const annexed = {
+      id: 21,
+      kind: 'region_annexed',
+      title: 'Земля «Водская земля» присоединена к государству «Москва»',
+      body: 'Прежнее государство: «Великий Новгород». Земля присоединена войной.',
+      country: { id: 1, name: 'Москва', short_name: 'Москва', flag_image_name: 'rus' },
+      payload: {
+        plants: [
+          { plant_type_id: 1, plant_type_name: 'Делянка', fossil_type_name: 'Строевой лес' },
+          { plant_type_id: 4, plant_type_name: 'Каменоломня', fossil_type_name: 'Камень' },
+        ],
+      },
+    };
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(
+        <NotificationOverlayView notification={annexed} onAcknowledge={jest.fn()} />,
+      );
+    });
+
+    const texts = textsOf(tree);
+    expect(texts).toContain('Москва');
+    expect(texts).toContain('Добывающие предприятия в государстве');
+    expect(texts).toContain('Делянка (Строевой лес)');
+    expect(texts).toContain('Каменоломня (Камень)');
+
+    // Герб берётся с бэкенда по flag_image_name, а не из текста названия.
+    const flag = tree.root
+      .findAllByType(Image)
+      .find((node) => String(node.props.source?.uri).includes('/images/countries/rus.png'));
+    expect(flag).toBeDefined();
+
+    act(() => tree.unmount());
+  });
+
+  /** Итог сражения: обе стороны списком (окно мастеру сражений и политики). */
+  it('показывает стороны сражения', async () => {
+    const battle = {
+      id: 31,
+      kind: 'battle_result',
+      title: 'Сражение: победа — атакующие',
+      body: 'Место: Тверь. Раундов: 3.',
+      country: { id: 1, name: 'Москва', short_name: 'Москва', flag_image_name: 'rus' },
+      payload: {
+        attackers: ['Армия Москвы (Иван)'],
+        defenders: ['Армия Твери (Пётр)'],
+      },
+    };
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(
+        <NotificationOverlayView notification={battle} onAcknowledge={jest.fn()} />,
+      );
+    });
+
+    const texts = textsOf(tree);
+    expect(texts).toContain('Атакующие');
+    expect(texts).toContain('Армия Москвы (Иван)');
+    expect(texts).toContain('Защищающиеся');
+    expect(texts).toContain('Армия Твери (Пётр)');
 
     act(() => tree.unmount());
   });

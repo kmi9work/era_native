@@ -138,6 +138,23 @@ export interface VoevodaAwardResult {
   }>;
 }
 
+/**
+ * Итог сражения для мастеров: `POST /battles/report.json`.
+ *
+ * Бой считается на клиенте, поэтому сервер узнаёт результат только этим
+ * запросом и рассылает уведомление мастерам сражений и политики.
+ */
+export interface BattleReportPayload {
+  attackers: Array<{ label: string }>;
+  defenders: Array<{ label: string }>;
+  winner_side: 'attacker' | 'defender';
+  outcome: string;
+  place?: string | null;
+  round?: number;
+  fallen_troops?: number;
+  winner_country_id?: number | null;
+}
+
 /** Армия с бэкенда: GET /armies.json. Государство выводится из владельца (country_id может быть null). */
 export interface Army {
   id: number;
@@ -236,6 +253,42 @@ export interface AppUser {
  * Адресовано ПОЛЬЗОВАТЕЛЮ, а не устройству: подтверждение с любого устройства
  * снимает окно на остальных.
  */
+export interface NotificationCountry {
+  id: number;
+  name: string;
+  short_name?: string | null;
+  flag_image_name?: string | null;
+}
+
+/** Добывающее предприятие, доступное в государстве (подсказка мастера экономики). */
+export interface NotificationPlantHint {
+  plant_type_id: number;
+  plant_type_name: string;
+  fossil_type_name?: string | null;
+}
+
+/**
+ * Разобранный payload уведомления. Поля общие для всех видов (`kind`) — окно
+ * читает только те, которые пришли.
+ */
+export interface NotificationPayload {
+  /** region_annexed, зрителю «экономика»: что теперь можно строить. */
+  plants?: NotificationPlantHint[];
+  /** battle_result: подписи армий обеих сторон. */
+  attackers?: string[];
+  defenders?: string[];
+  place?: string | null;
+  round?: number | null;
+  fallen_troops?: number | null;
+  winner_side?: 'attacker' | 'defender' | string | null;
+  outcome?: string | null;
+  region_name?: string | null;
+  country_name?: string | null;
+  previous_country_name?: string | null;
+  how?: string | null;
+  [key: string]: unknown;
+}
+
 export interface AppNotification {
   id: number;
   kind: string;
@@ -243,9 +296,9 @@ export interface AppNotification {
   body?: string | null;
   technology_id?: number | null;
   country_id?: number | null;
-  payload?: Record<string, unknown>;
+  payload?: NotificationPayload | null;
   acknowledged_at?: string | null;
   created_at?: string;
-  country?: { id: number; name: string } | null;
+  country?: NotificationCountry | null;
   technology?: { id: number; name: string } | null;
 }

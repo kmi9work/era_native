@@ -5,6 +5,7 @@ import type {
   AppNotification,
   AppUser,
   Army,
+  BattleReportPayload,
   Country,
   Player,
   Region,
@@ -297,6 +298,18 @@ class ApiService {
       paramsSerializer: { indexes: null },
     });
     return response.data;
+  }
+
+  /**
+   * Итог сражения для мастеров сражений и политики: `POST /battles/report.json`.
+   *
+   * Бой на экране «Сражения» считается на клиенте, поэтому без этого запроса о
+   * нём знает только планшет: сервер не создаёт ни `Battle`, ни уведомление.
+   * Отправляем один раз на бой, как только результат определился. Отказ сервера
+   * бой не отменяет — окно мастерам вторично по отношению к посчитанному бою.
+   */
+  async reportBattle(payload: BattleReportPayload): Promise<void> {
+    await this.api.post('/battles/report.json', payload);
   }
 
   /**
