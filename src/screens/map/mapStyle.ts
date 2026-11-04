@@ -21,13 +21,13 @@ export const MARKER_MAX_DP = 34;
 
 /** Подпись города: экранный кегль и границы. */
 export const LABEL_MIN_DP = 9;
-export const LABEL_MAX_DP = 16;
+export const LABEL_MAX_DP = 11;
 /** Во сколько раз кегль исходника увеличиваем на экране (до потолка LABEL_MAX_DP). */
-export const LABEL_SCALE_FACTOR = 1.9;
+export const LABEL_SCALE_FACTOR = 1.5;
 /** Подписи с кеглем исходника ниже этого прячутся на мелком зуме (LOD). */
-export const LABEL_ALWAYS_FONT = 20;
+export const LABEL_ALWAYS_FONT = 30;
 /** Во сколько раз относительно «вписана» показываются все подписи. */
-export const LABEL_ALL_ZOOM = 1.8;
+export const LABEL_ALL_ZOOM = 1.35;
 
 export const MAP_COLORS = {
   /** Фон вокруг карты (тёмное дерево/пергамент). */

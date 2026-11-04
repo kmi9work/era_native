@@ -11,10 +11,11 @@ interface Props {
   onZoomOut: () => void;
   onFit: () => void;
   bottom: number;
+  right: number;
 }
 
-const MapControls = ({ onZoomIn, onZoomOut, onFit, bottom }: Props) => (
-  <View style={[styles.wrap, { bottom }]} pointerEvents="box-none">
+const MapControls = ({ onZoomIn, onZoomOut, onFit, bottom, right }: Props) => (
+  <View style={[styles.wrap, { bottom, right }]} pointerEvents="box-none">
     <TouchableOpacity
       style={styles.button}
       onPress={onZoomIn}
@@ -45,7 +46,6 @@ const MapControls = ({ onZoomIn, onZoomOut, onFit, bottom }: Props) => (
 const styles = StyleSheet.create({
   wrap: {
     position: 'absolute',
-    right: 16,
     alignItems: 'center',
     gap: 10,
   },

@@ -323,6 +323,7 @@ const MapCanvas = ({
         onZoomOut={() => zoomBy(1 / 1.4)}
         onFit={() => onViewChange(fitView())}
         bottom={bottomInset + 16}
+        right={rightInset + 16}
       />
     </View>
   );
