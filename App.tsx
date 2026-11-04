@@ -10,6 +10,7 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import PlantWorkshopScreen from './src/screens/PlantWorkshopScreen';
 import MarketScreen from './src/screens/MarketScreen';
 import BattlesScreen from './src/screens/BattlesScreen';
+import MapScreen from './src/screens/MapScreen';
 import NotificationOverlay from './src/components/NotificationOverlay';
 import { initializePlugins } from './src/plugins';
 
@@ -57,6 +58,11 @@ export default function App() {
                 name="Battles"
                 component={BattlesScreen}
                 options={{ title: 'Сражения' }}
+              />
+              <Stack.Screen
+                name="Map"
+                component={MapScreen}
+                options={{ title: 'Карта' }}
               />
             </Stack.Navigator>
           </NavigationContainer>

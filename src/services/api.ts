@@ -346,6 +346,27 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Постройка в городе — тот же вызов, что в веб-админке
+   * (`era_front/.../politics/Ownership.vue`): `POST /settlements/:id/build.json?building_type_id=`.
+   * Для крепости buildingTypeId = 2 (`BuildingType::DEFENCE`).
+   */
+  async buildSettlementBuilding(settlementId: number, buildingTypeId: number): Promise<any> {
+    const response = await this.api.post(`/settlements/${settlementId}/build.json`, null, {
+      params: { building_type_id: buildingTypeId },
+    });
+    return response.data;
+  }
+
+  /**
+   * Улучшение постройки: `PATCH /buildings/:id/upgrade.json`.
+   * Мастер вызывает без бонусов зодчего/митрополита — как ветка 'master' в вебе.
+   */
+  async upgradeBuilding(buildingId: number): Promise<any> {
+    const response = await this.api.patch(`/buildings/${buildingId}/upgrade.json`);
+    return response.data;
+  }
+
   // Все поселения (город/столица): для выбора места сражения
   async getSettlements(signal?: AbortSignal): Promise<Settlement[]> {
     const response = await this.api.get('/settlements.json', { params: { all: 1 }, signal });

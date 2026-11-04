@@ -223,6 +223,20 @@ const SettingsScreen = () => {
             </View>
             <Text style={styles.settingButtonArrow}>›</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingButton}
+            onPress={() => navigation.navigate('Map' as never)}
+          >
+            <Text style={styles.settingButtonIcon}>🗺</Text>
+            <View style={styles.settingButtonContent}>
+              <Text style={styles.settingButtonText}>Карта</Text>
+              <Text style={styles.settingButtonDescription}>
+                Города, крепости и владельцы на карте
+              </Text>
+            </View>
+            <Text style={styles.settingButtonArrow}>›</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>

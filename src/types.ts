@@ -201,6 +201,13 @@ export interface Settlement {
   income?: number;
   /** Владелец города (игрок). Отдельного player_id партиал не отдаёт — только объект. */
   player?: Player | null;
+  /** Координаты на карте (0..1 от полотна); null — город не размещён. */
+  map_x?: number | null;
+  map_y?: number | null;
+  /** Уровень крепости: 0 нет, 1 форт, 2 крепость, 3 кремль. */
+  fortress_level?: number;
+  /** Открыты ли ворота города. */
+  open_gate?: boolean | null;
 }
 
 export interface Region {
@@ -208,6 +215,9 @@ export interface Region {
   name: string;
   country_id?: number | null;
   country?: { id: number; name: string; short_name?: string } | null;
+  /** Общественный порядок земли (для государства запроса). */
+  show_overall_po?: number | null;
+  player?: Player | null;
 }
 
 export interface Resource {
