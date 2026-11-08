@@ -2,8 +2,9 @@ export interface Player {
   id: number;
   name: string;
   identificator: string;
-  player_type?: string;
-  family?: string;
+  /** Тип игрока и фамилия приходят объектами (players/player.json.jbuilder). */
+  player_type?: { id: number; name: string } | null;
+  family?: { id: number; name: string } | null;
   jobs: string[];
   /** Государство игрока: GET /players.json отдаёт и id, и объект страны. */
   country_id?: number | null;
@@ -167,6 +168,9 @@ export interface Army {
     name: string;
     country_id?: number | null;
     country?: { id: number; name: string } | null;
+    /** Фамилия (щит армии на карте) и тип игрока («Дух народного бунта» → бунт). */
+    family?: { id: number; name: string } | null;
+    player_type?: { id: number; name: string } | null;
   } | null;
   settlement?: {
     id: number;
@@ -174,10 +178,38 @@ export interface Army {
     settlement_type_id?: number;
     settlement_type?: { id: number; name: string } | null;
     region_id?: number | null;
+    /** Координаты города (0..1): армия в городе рисуется под его меткой. */
+    map_x?: number | null;
+    map_y?: number | null;
   } | null;
+  /** Положение армии в поле (0..1); null — армия в городе или ещё не размещена. */
+  map_x?: number | null;
+  map_y?: number | null;
+  /**
+   * Шаги перемещения за год (правила заказчика): потрачено и максимум по составу
+   * и технологии «Консервирование». Считает сервер (Army#steps_max/steps_spent);
+   * на старом бэкенде полей нет — блок шагов тогда не показывается.
+   */
+  steps_spent?: number | null;
+  steps_max?: number | null;
+  /** params армии (`palsy`, `steps_spent`, `additional`). */
+  params?: Record<string, unknown> | null;
+  /** Государство армии (выводится из владельца на бэкенде). */
+  country?: { id: number; name: string; short_name?: string } | null;
   troops?: ArmyTroop[];
   attack_power?: number;
   defense_power?: number;
+}
+
+/** Тип отряда: GET /troop_types.json. Цена найма — `params.buy_cost` (как в вебе). */
+export interface TroopType {
+  id: number;
+  name: string;
+  params?: {
+    power?: number;
+    max_health?: number;
+    buy_cost?: Array<{ identificator: string; count: number }>;
+  } | null;
 }
 
 export interface Building {

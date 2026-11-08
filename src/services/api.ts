@@ -10,6 +10,7 @@ import type {
   Player,
   Region,
   Settlement,
+  TroopType,
   VoevodaAwardResult,
 } from '../types';
 
@@ -259,6 +260,66 @@ class ApiService {
   // Все армии игры (активные): экран «Сражения»
   async getArmies(signal?: AbortSignal): Promise<Army[]> {
     const response = await this.api.get('/armies.json', { signal });
+    return response.data;
+  }
+
+  /** Типы отрядов с ценой найма (`params.buy_cost`): GET /troop_types.json */
+  async getTroopTypes(signal?: AbortSignal): Promise<TroopType[]> {
+    const response = await this.api.get('/troop_types.json', { signal });
+    return response.data;
+  }
+
+  /**
+   * Новая армия: `POST /armies.json` (тот же вызов, что форма веб-админки).
+   * Владелец обязателен — государство (`Country`) или знатный игрок (`Player`).
+   * Положение задаётся либо городом (`settlement_id`), либо `map_x`/`map_y`.
+   */
+  async createArmy(payload: {
+    name: string;
+    owner_type: 'Country' | 'Player';
+    owner_id: number;
+    settlement_id?: number | null;
+    map_x?: number | null;
+    map_y?: number | null;
+  }): Promise<Army> {
+    const response = await this.api.post('/armies.json', { army: payload });
+    return response.data;
+  }
+
+  /**
+   * Перемещение армии: `PATCH /armies/:id.json` с новым положением.
+   * Город и координаты взаимоисключающие: при переходе в город `settlement_id`
+   * ставится, а `map_x`/`map_y` очищаются (пустая строка → null), в поле —
+   * наоборот, `settlement_id` очищается.
+   *
+   * `steps_spent` едет тем же запросом: перемещение и списание шагов — одно
+   * действие мастера, и раздельные запросы оставляли бы армию передвинутой без
+   * потраченных шагов (или наоборот), если второй запрос не прошёл.
+   */
+  async moveArmy(
+    armyId: number,
+    position: {
+      settlement_id: number | null;
+      map_x: number | null;
+      map_y: number | null;
+      steps_spent?: number;
+    },
+  ): Promise<Army> {
+    const army: Record<string, unknown> = {
+      settlement_id: position.settlement_id ?? '',
+      map_x: position.map_x,
+      map_y: position.map_y,
+    };
+    if (position.steps_spent !== undefined) army.steps_spent = position.steps_spent;
+    const response = await this.api.patch(`/armies/${armyId}.json`, { army });
+    return response.data;
+  }
+
+  /** Новый отряд в армии: `POST /armies/:id/troops.json?troop_type_id=` */
+  async addTroop(armyId: number, troopTypeId: number): Promise<Army> {
+    const response = await this.api.post(`/armies/${armyId}/troops.json`, null, {
+      params: { troop_type_id: troopTypeId },
+    });
     return response.data;
   }
 

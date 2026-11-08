@@ -10,13 +10,14 @@
  * ключи перечислены и в `useRefetchOnFocus`, и в шильдике свежести — расхождение
  * ключей давало бы фантомное «нет связи».
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import DataFreshnessBadge from '../components/DataFreshnessBadge';
 import { queryKeys } from '../data/keys';
 import { useRefetchOnFocus } from '../data/useRefetchOnFocus';
 import { useBattleLogic } from './hooks/useBattleLogic';
+import { getBattlePlan } from './map/battlePlanStore';
 import StepBar from './battles/components/StepBar';
 import PlaceStep from './battles/steps/PlaceStep';
 import ArmiesStep from './battles/steps/ArmiesStep';
@@ -25,7 +26,12 @@ import BattleStep from './battles/steps/BattleStep';
 
 const BattlesScreen = () => {
   const navigation = useNavigation();
-  const logic = useBattleLogic();
+  /**
+   * Сражения, набранные на карте. Забираем ОДИН раз при открытии экрана: план
+   * может измениться на карте, пока идёт бой, и подменять начатую очередь нельзя.
+   */
+  const [initialPlan] = useState(() => getBattlePlan());
+  const logic = useBattleLogic({ plan: initialPlan });
 
   useRefetchOnFocus([
     queryKeys.armies(),
@@ -62,7 +68,9 @@ const BattlesScreen = () => {
           <View style={styles.headerCenter}>
             <Text style={styles.title}>Сражения</Text>
             <Text style={styles.subtitle} numberOfLines={1}>
-              {logic.placeTitle}
+              {logic.hasQueuedBattles
+                ? `Сражение ${logic.queuePosition} из ${logic.queueTotal} · ${logic.placeTitle}`
+                : logic.placeTitle}
             </Text>
           </View>
           <DataFreshnessBadge
@@ -79,6 +87,12 @@ const BattlesScreen = () => {
       )}
 
       {logic.step !== 'battle' ? <StepBar step={logic.step} /> : null}
+
+      {logic.queueNotice && logic.step !== 'battle' ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>{logic.queueNotice}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.body}>
         {logic.step === 'place' ? <PlaceStep logic={logic} /> : null}
@@ -152,6 +166,17 @@ const styles = StyleSheet.create({
   },
   badge: {
     marginLeft: 8,
+  },
+  notice: {
+    backgroundColor: '#fff3e0',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ffe0b2',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  noticeText: {
+    color: '#b26a00',
+    fontSize: 12,
   },
   body: {
     flex: 1,

@@ -19,11 +19,17 @@ interface Props {
   color: string;
   capital: boolean;
   selected?: boolean;
+  /** Город — цель переноса армии под пальцем. */
+  highlighted?: boolean;
+  /** По городу уже набрано сражение (точка плана). */
+  planned?: boolean;
 }
 
-const CityMarker = ({ x, y, size, color, capital, selected }: Props) => {
+const CityMarker = ({ x, y, size, color, capital, selected, highlighted, planned }: Props) => {
   const ringSize = size + Math.max(6, size * 0.34);
   const glyph = size * 0.58;
+  const planRing = ringSize + Math.max(4, size * 0.2);
+  const targetRing = ringSize + Math.max(8, size * 0.34);
 
   return (
     <View
@@ -33,6 +39,34 @@ const CityMarker = ({ x, y, size, color, capital, selected }: Props) => {
         { left: x - size / 2, top: y - size / 2, width: size, height: size },
       ]}
     >
+      {planned ? (
+        <View
+          style={[
+            styles.planRing,
+            {
+              width: planRing,
+              height: planRing,
+              borderRadius: planRing / 2,
+              left: (size - planRing) / 2,
+              top: (size - planRing) / 2,
+            },
+          ]}
+        />
+      ) : null}
+      {highlighted ? (
+        <View
+          style={[
+            styles.targetRing,
+            {
+              width: targetRing,
+              height: targetRing,
+              borderRadius: targetRing / 2,
+              left: (size - targetRing) / 2,
+              top: (size - targetRing) / 2,
+            },
+          ]}
+        />
+      ) : null}
       {selected ? (
         <View
           style={[
@@ -82,6 +116,18 @@ const styles = StyleSheet.create({
     position: 'absolute',
     borderWidth: 2,
     borderColor: MAP_COLORS.accent,
+  },
+  planRing: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderColor: MAP_COLORS.target,
+    borderStyle: 'dashed',
+  },
+  targetRing: {
+    position: 'absolute',
+    borderWidth: 3,
+    borderColor: MAP_COLORS.accent,
+    backgroundColor: 'rgba(201,162,39,0.22)',
   },
 });
 

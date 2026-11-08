@@ -343,6 +343,28 @@ const OutcomePanel: React.FC<{ logic: BattleLogic }> = ({ logic }) => {
         </View>
       ) : null}
 
+      {logic.hasNextBattle ? (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>
+            Следующее сражение ({logic.queuePosition + 1} из {logic.queueTotal})
+          </Text>
+          <Text style={styles.blockLine}>
+            Сражения набраны на карте: следующее раскроется с уже расставленными армиями.
+          </Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={logic.nextQueuedBattle}>
+            <Text style={styles.primaryButtonText}>Перейти к следующему сражению</Text>
+          </TouchableOpacity>
+        </View>
+      ) : logic.hasQueuedBattles ? (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>Все набранные сражения сыграны</Text>
+          <Text style={styles.blockLine}>
+            Вернитесь на карту, чтобы набрать новые: план из {logic.queueTotal} сражений
+            отработан целиком.
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.actions}>
         <TouchableOpacity style={styles.secondaryButton} onPress={logic.resetAll}>
           <Text style={styles.secondaryButtonText}>Новое сражение</Text>

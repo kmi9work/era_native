@@ -23,3 +23,11 @@ export const countryFlagUrl = (flagImageName?: string | null): string | null => 
 
   return `${imagesBaseUrl()}/images/countries/${encodeURIComponent(clean)}.png`;
 };
+
+/**
+ * Значок ресурса по `identificator` (`meat`, `metal`, `weapon`, …).
+ * Файлы лежат в eraofchange `public/images/resources/<identificator>.png` —
+ * то же место, откуда их берут веб и `era_players`.
+ */
+export const resourceIconUrl = (identificator: string): string =>
+  `${imagesBaseUrl()}/images/resources/${encodeURIComponent(identificator)}.png`;

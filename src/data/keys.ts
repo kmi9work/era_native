@@ -56,6 +56,8 @@ export const queryKeys = {
   regions: (): QueryKey => ['regions'],
   /** Все игроки игры: GET /players.json — назначение владельца города */
   players: (): QueryKey => ['players'],
+  /** Типы отрядов (название, цена найма): GET /troop_types.json — карта, набор отрядов */
+  troopTypes: (): QueryKey => ['troopTypes'],
   /** Эмбарго на гильдию в разрезе стран: GET /many_teams/guild_embargoes/market?guild_id=
    *  Гильдия — часть ключа: эмбарго накладывается на гильдию, у разных гильдий
    *  разные страны-эмбаргодержатели. В остальных играх ключ не запрашивается

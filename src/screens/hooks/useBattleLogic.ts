@@ -48,6 +48,8 @@ import {
   type TroopKind,
 } from '../../services/battleRules';
 import type { Army, Settlement } from '../../types';
+import type { PlannedBattle } from '../map/battlePlan';
+import { clearBattlePlan } from '../map/battlePlanStore';
 
 export type BattleSide = 'attacker' | 'defender';
 export type BattleStep = 'place' | 'armies' | 'buffs' | 'battle';
@@ -123,12 +125,25 @@ const MAX_ARMY_MODIFIER = 3;
 
 const sideLabel = (side: BattleSide) => (side === 'attacker' ? 'Атакующие' : 'Защищающиеся');
 
-export function useBattleLogic() {
+export function useBattleLogic(options?: { plan?: PlannedBattle[] }) {
   const armiesQuery = useArmies();
   const settlementsQuery = useSettlements();
   const regionsQuery = useRegions();
   const allCountriesQuery = useAllCountries();
   const playersQuery = usePlayers();
+
+  /**
+   * Очередь сражений, набранных на карте (§ 16 ТЗ карты). План забирается ОДИН
+   * раз при открытии экрана: дальше очередь ведёт сам хук, иначе правка плана на
+   * карте подменила бы уже начатый бой. Пустой план — обычный ручной режим.
+   */
+  const [queue] = useState<PlannedBattle[]>(() => options?.plan ?? []);
+  const [queueIndex, setQueueIndex] = useState(0);
+  /** Мастер нажал «Новое сражение» — очередь больше не ведёт экран. */
+  const [queueActive, setQueueActive] = useState(() => (options?.plan?.length ?? 0) > 0);
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
+  const appliedQueueRef = useRef(-1);
+  const plannedBattle = queueActive ? queue[queueIndex] ?? null : null;
 
   const [step, setStep] = useState<BattleStep>('place');
   const [placeKind, setPlaceKindState] = useState<'field' | 'city'>('field');
@@ -597,6 +612,153 @@ export function useBattleLogic() {
     setCityOwnerResult(null);
   }, [resetScene]);
 
+  // ─── Очередь сражений с карты ────────────────────────────────────────────
+
+  /** Армия бэкенда → армия на столе боя (та же форма, что даёт `addArmy`). */
+  const makeBattleArmy = useCallback(
+    (army: Army, side: BattleSide): BattleArmy => {
+      const uid = nextUid('army');
+      const startOrder = orderRef.current;
+      const troops = battleTroopsFromArmy(army, startOrder, uid);
+      orderRef.current = startOrder + troops.length;
+      return {
+        uid,
+        armyId: army.id,
+        name: army.name,
+        ownerName: army.owner?.name || 'без владельца',
+        ownerPlayerId: army.owner_type === 'Player' && army.owner?.id ? army.owner.id : null,
+        countryId: armyCountryId(army, regionCountryId),
+        side,
+        troops,
+        bonus: 0,
+        debuff: 0,
+        retreated: false,
+        retreatRoll: null,
+      };
+    },
+    [nextUid, regionCountryId],
+  );
+
+  /** Гарнизон города: одна пехота, на бэкенде такой армии нет. */
+  const makeGarrison = useCallback(
+    (settlementName: string, countryId: number | null): BattleArmy => ({
+      uid: nextUid('garrison'),
+      armyId: null,
+      isGarrison: true,
+      name: `Гарнизон (${settlementName})`,
+      ownerName: 'город',
+      ownerPlayerId: null,
+      countryId,
+      side: 'defender',
+      troops: [
+        {
+          uid: nextUid('city'),
+          kind: 'infantry',
+          name: 'Пехота (город)',
+          source: 'city',
+          order: nextOrder(),
+          troopId: null,
+        },
+      ],
+      bonus: 0,
+      debuff: 0,
+      retreated: false,
+      retreatRoll: null,
+    }),
+    [nextOrder, nextUid],
+  );
+
+  /**
+   * Разложить сражение с карты по столу: место (поле/город), армии по сторонам,
+   * гарнизон города. Армии, которых уже нет на бэкенде, в бой не попадают —
+   * мастер видит предупреждение, а не пустой экран.
+   */
+  const applyQueuedBattle = useCallback(
+    (battle: PlannedBattle, armiesData: Army[]) => {
+      // Прошлый бой (если он был) обнуляем ДО сборки: uid и порядок отрядов
+      // начинаются с нуля, иначе «U-идентификаторы» двух сражений пересекаются.
+      resetBattleState();
+      orderRef.current = 0;
+      uidRef.current = 0;
+
+      const byId = new Map<number, Army>();
+      armiesData.forEach(army => byId.set(army.id, army));
+
+      const missing: string[] = [];
+      const build = (ids: number[], side: BattleSide): BattleArmy[] =>
+        ids.flatMap(id => {
+          const army = byId.get(id);
+          if (!army) {
+            missing.push(String(id));
+            return [];
+          }
+          return [makeBattleArmy(army, side)];
+        });
+
+      let entries: BattleArmy[] = [];
+      if (battle.kind === 'city' && battle.cityId !== null) {
+        const settlement =
+          (settlementsQuery.data || []).find(item => item.id === battle.cityId) ?? null;
+        const countryId = settlement ? regionCountryId(settlement.region_id) : null;
+        setPlaceKindState('city');
+        setSelectedCountryId(countryId);
+        setSelectedSettlementId(settlement ? settlement.id : null);
+        // Город защищается сам — гарнизон стоит в защите всегда (как после шага «Место»).
+        if (settlement) entries.push(makeGarrison(settlement.name, countryId));
+      } else {
+        setPlaceKindState('field');
+        setSelectedCountryId(null);
+        setSelectedSettlementId(null);
+      }
+
+      entries = [
+        ...entries,
+        ...build(battle.attackerIds, 'attacker'),
+        ...build(battle.defenderIds, 'defender'),
+      ];
+
+      setBattleArmies(entries);
+      setQueueNotice(
+        missing.length > 0
+          ? `На бэкенде нет армий: ${missing.join(', ')} — они пропущены.`
+          : null,
+      );
+      setStep('armies');
+    },
+    [
+      makeBattleArmy,
+      makeGarrison,
+      regionCountryId,
+      resetBattleState,
+      settlementsQuery.data,
+    ],
+  );
+
+  /**
+   * Первое сражение из очереди раскладывается, как только пришли армии: список
+   * грузится слоем данных, а не экраном, поэтому к первому рендеру его ещё нет.
+   */
+  useEffect(() => {
+    if (!plannedBattle) return;
+    if (appliedQueueRef.current === queueIndex) return;
+    const data = armiesQuery.data;
+    if (!data || data.length === 0) return;
+    appliedQueueRef.current = queueIndex;
+    applyQueuedBattle(plannedBattle, data);
+    // Последнее сражение забрали в работу — план на карте больше не нужен:
+    // иначе он висел бы там с уже разбитыми армиями.
+    if (queueIndex === queue.length - 1) clearBattlePlan();
+  }, [applyQueuedBattle, armiesQuery.data, plannedBattle, queue.length, queueIndex]);
+
+  const nextQueuedBattle = useCallback(() => {
+    if (queueIndex + 1 >= queue.length) return;
+    setQueueNotice(null);
+    setBattleArmies([]);
+    setStep('place');
+    resetBattleState();
+    setQueueIndex(index => index + 1);
+  }, [queue.length, queueIndex, resetBattleState]);
+
   /** Пехота от города: по одной в каждую защищающуюся армию (только в городском бою). */
   const ensureCityInfantry = useCallback(() => {
     if (placeKind !== 'city') return;
@@ -635,30 +797,7 @@ export function useBattleLogic() {
       if (placeKind === 'city' && selectedSettlement) {
         // Город защищается сам: в защищающихся сразу стоит его гарнизон — одна пехота.
         // Это позволяет вести бой «один город против одной армии», не выбирая защитника.
-        const garrison: BattleArmy = {
-          uid: nextUid('garrison'),
-          armyId: null,
-          isGarrison: true,
-          name: `Гарнизон (${selectedSettlement.name})`,
-          ownerName: 'город',
-          ownerPlayerId: null,
-          countryId: defendingCountryId,
-          side: 'defender',
-          troops: [
-            {
-              uid: nextUid('city'),
-              kind: 'infantry',
-              name: 'Пехота (город)',
-              source: 'city',
-              order: nextOrder(),
-              troopId: null,
-            },
-          ],
-          bonus: 0,
-          debuff: 0,
-          retreated: false,
-          retreatRoll: null,
-        };
+        const garrison = makeGarrison(selectedSettlement.name, defendingCountryId);
         setBattleArmies(prev => [garrison, ...prev.filter(army => !army.isGarrison)]);
       } else {
         setBattleArmies(prev => prev.filter(army => !army.isGarrison));
@@ -682,8 +821,7 @@ export function useBattleLogic() {
     defenders.length,
     defendingCountryId,
     ensureCityInfantry,
-    nextOrder,
-    nextUid,
+    makeGarrison,
     placeKind,
     placeReady,
     resetBattleState,
@@ -724,6 +862,7 @@ export function useBattleLogic() {
     setBattleArmies([]);
     orderRef.current = 0;
     uidRef.current = 0;
+    setQueueActive(false);
     resetBattleState();
   }, [resetBattleState]);
 
@@ -1531,6 +1670,14 @@ export function useBattleLogic() {
     goNext,
     goBack,
     resetAll,
+    /** Очередь сражений, набранных на карте (§ 16 ТЗ карты). */
+    hasQueuedBattles: queueActive && queue.length > 0,
+    queueTotal: queue.length,
+    queuePosition: queue.length > 0 ? queueIndex + 1 : 0,
+    plannedBattle,
+    queueNotice,
+    hasNextBattle: queueIndex + 1 < queue.length,
+    nextQueuedBattle,
     // шаг 4
     round,
     phase,
